@@ -93,6 +93,9 @@ public partial class PowerPointHandler
             // OOXML ST_TextNonNegativePoint refuses negative kern. Writing
             // kern=-100 produces a file PowerPoint silently rewrites on open.
             if (key == "kern" && iv < 0) return false;
+            // OOXML ST_TextPoint clamps spc to [-400000, 400000] hundredths
+            // of a point. Out-of-band values get silently dropped on open.
+            if (key == "spc" && (iv < -400000 || iv > 400000)) return false;
             return true;
         }
         if (DrawingRunBoolAttrs.Contains(key))
@@ -882,6 +885,11 @@ public partial class PowerPointHandler
                     if (!double.TryParse(value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var spcDbl) || double.IsNaN(spcDbl) || double.IsInfinity(spcDbl))
                         throw new ArgumentException($"Invalid 'charspacing' value: '{value}'. Expected a finite number in points (e.g. 2, -1, 0.5).");
                     var spcVal = (int)(spcDbl * 100);
+                    // OOXML ST_TextPoint: hundredths of a point, range
+                    // [-400000, 400000] (== [-4000pt, 4000pt]). PowerPoint
+                    // silently rewrites out-of-band values to default on open.
+                    if (spcVal < -400000 || spcVal > 400000)
+                        throw new ArgumentException($"Invalid 'charspacing' value: '{value}': OOXML ST_TextPoint range is [-4000pt, 4000pt].");
                     foreach (var run in runs)
                     {
                         var rProps = run.RunProperties ?? (run.RunProperties = new Drawing.RunProperties());
@@ -1282,6 +1290,9 @@ public partial class PowerPointHandler
                             if (key == "kern" && int.TryParse(value, out var kv) && kv < 0)
                                 throw new ArgumentException(
                                     $"Invalid kern '{value}': OOXML ST_TextNonNegativePoint requires kern >= 0 (hundredths of a point).");
+                            if (key == "spc" && int.TryParse(value, out var sv) && (sv < -400000 || sv > 400000))
+                                throw new ArgumentException(
+                                    $"Invalid spc '{value}': OOXML ST_TextPoint range is [-400000, 400000] hundredths of a point.");
                             throw new ArgumentException(
                                 $"Invalid value for OOXML rPr/{key}: '{value}'.");
                         }
