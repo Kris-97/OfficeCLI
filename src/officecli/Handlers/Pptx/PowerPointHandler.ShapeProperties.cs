@@ -171,6 +171,31 @@ public partial class PowerPointHandler
             }
         }
 
+        // Raise OOXML short-form attribute names to canonical curated case
+        // labels BEFORE dispatch. Without this, short-forms (`sz`, `b`, `i`,
+        // `u`, `strike`) fall through to the long-tail attribute writer which
+        // writes the raw value verbatim — `sz=14` lands as sz="14" violating
+        // ST_TextFontSize (min 100, hundredths of a point) and corrupts the
+        // file; `b=true` lands as b="true" instead of the xsd:boolean
+        // canonical "1". Mapping early lets the curated cases below handle
+        // unit conversion and canonical serialization (FontSize×100, bool→1/0).
+        var shortFormMap = new (string Short, string Canonical)[]
+        {
+            ("sz", "size"),
+            ("b", "bold"),
+            ("i", "italic"),
+            ("u", "underline"),
+        };
+        foreach (var (shortKey, canonical) in shortFormMap)
+        {
+            string? matched = properties.Keys.FirstOrDefault(k => k.Equals(shortKey, StringComparison.Ordinal));
+            if (matched == null || properties.ContainsKey(canonical)) continue;
+            var v = properties[matched];
+            properties = new Dictionary<string, string>(properties, properties.Comparer);
+            properties.Remove(matched);
+            properties[canonical] = v;
+        }
+
         // CONSISTENCY(prop-order): fill carriers (fill/gradient/pattern) must run
         // before modifier props (opacity attaches alpha to the resulting solidFill);
         // otherwise opacity auto-creates a white fill that fill= then overwrites.
