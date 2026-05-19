@@ -727,12 +727,45 @@ internal static partial class ChartHelper
                     var dispEq = firstTl.GetFirstChild<C.DisplayEquation>()?.Val;
                     if (dispEq?.HasValue == true && dispEq.Value) seriesNode.Format["trendline.dispEq"] = "true";
                 }
-                // Error bars
+                // Error bars — emit as a "type:value" spec mirroring the
+                // BuildErrorBars input form so dump→replay re-creates the
+                // <c:errBars> element. Reading only the bare type lost the
+                // magnitude (the <c:val>/<c:plus>/<c:minus> NumericLiteral),
+                // and the per-series key `errBars` was also overshadowed by
+                // chart-level errbars=... in batch emit.
                 var errBars = serEl?.GetFirstChild<C.ErrorBars>();
                 if (errBars != null)
                 {
                     var errValType = errBars.GetFirstChild<C.ErrorBarValueType>()?.Val;
-                    if (errValType?.HasValue == true) seriesNode.Format["errBars"] = errValType.InnerText;
+                    if (errValType?.HasValue == true)
+                    {
+                        var typeName = errValType.InnerText switch
+                        {
+                            "fixedVal" => "fixed",
+                            "percentage" => "percent",
+                            "stdDev" => "stddev",
+                            "stdErr" => "stderr",
+                            _ => errValType.InnerText
+                        };
+                        // Magnitude lives in either <c:val>, or shared
+                        // <c:plus>/<c:minus> NumericLiteral first point.
+                        string? mag = null;
+                        var valEl = errBars.GetFirstChild<C.ErrorBarValue>()?.Val?.Value;
+                        if (valEl.HasValue && valEl.Value != 0)
+                            mag = valEl.Value.ToString("G",
+                                System.Globalization.CultureInfo.InvariantCulture);
+                        else
+                        {
+                            var plusLit = errBars.GetFirstChild<C.Plus>()
+                                ?.GetFirstChild<C.NumberLiteral>();
+                            var firstPt = plusLit?.Elements<C.NumericPoint>().FirstOrDefault();
+                            var numStr = firstPt?.GetFirstChild<C.NumericValue>()?.Text;
+                            if (!string.IsNullOrEmpty(numStr)) mag = numStr;
+                        }
+                        seriesNode.Format["errbars"] = mag != null
+                            ? $"{typeName}:{mag}"
+                            : typeName;
+                    }
                 }
                 // InvertIfNegative
                 var inv = serEl?.GetFirstChild<C.InvertIfNegative>()?.Val;
