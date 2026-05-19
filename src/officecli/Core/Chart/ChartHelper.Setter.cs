@@ -59,7 +59,14 @@ internal static partial class ChartHelper
                 case "title":
                     chart.RemoveAllChildren<C.Title>();
                     if (!string.IsNullOrEmpty(value) && !value.Equals("none", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // CONSISTENCY(autoTitleDeleted-paired): setting a title back
+                        // must clear any autoTitleDeleted=1 that an earlier `title=`
+                        // removal (or autoTitleDeleted=true) left behind — otherwise
+                        // the new title element is present but suppressed at render.
+                        chart.RemoveAllChildren<C.AutoTitleDeleted>();
                         chart.PrependChild(BuildChartTitle(value));
+                    }
                     break;
 
                 case "title.font" or "titlefont":
