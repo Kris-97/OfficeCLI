@@ -482,6 +482,14 @@ public partial class WordHandler
         hlRProps.Underline = new Underline { Val = UnderlineValues.Single };
         if (properties.TryGetValue("font", out var hlFont))
             hlRProps.RunFonts = new RunFonts { Ascii = hlFont, HighAnsi = hlFont };
+        // Dump emits font.latin alongside bare font for hyperlink runs; mirror
+        // the bare-font behavior so batch replay doesn't silently drop it.
+        if (properties.TryGetValue("font.latin", out var hlFontLatin))
+        {
+            hlRProps.RunFonts ??= new RunFonts();
+            hlRProps.RunFonts.Ascii = hlFontLatin;
+            hlRProps.RunFonts.HighAnsi = hlFontLatin;
+        }
         // BUG-DUMP17-07: mirror per-script font slot from Add.Text. Without this
         // branch, dump emits font.cs on hyperlink runs but batch replay silently
         // drops it.
