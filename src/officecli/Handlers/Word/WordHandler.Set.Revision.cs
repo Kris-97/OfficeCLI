@@ -180,6 +180,40 @@ public partial class WordHandler
             stripped[k] = v;
         }
 
+        // D-on-Run: bare `revision.author=…` (no explicit type, no other
+        // --prop) on a Run is rejected. Without an actual action to
+        // attribute, the legacy fallback would silently write an
+        // rPrChange whose "previous rPr" snapshot equals the current rPr
+        // — i.e. a tracked-change marker that records no change. Word UI
+        // never produces this: your name gets attached only once you've
+        // actually edited something. Three escape hatches:
+        //   - pass `--prop font=…` etc. alongside (rule 2: infer format)
+        //   - pass `--prop revision.type=ins|del|moveFrom|moveTo` (the
+        //     wrap itself is the action)
+        //   - pass `--prop revision.type=format --prop <prop>=<value>`
+        //     (explicit format-change with a real prop change)
+        //
+        // Scope is Run-only by design. The dump→batch round-trip emits
+        // bare-attribution `set` calls for tblPrChange / trPrChange /
+        // tcPrChange / sectPrChange (see WordBatchEmitter.Table.cs
+        // EmitTrackChangeMarker) because the source dump can't recover
+        // the pre-change tblPr/trPr/tcPr — the recreated marker is
+        // necessarily "snapshot = current state". Tightening the rule on
+        // those elements would need an emitter refactor; for now allow
+        // bare attribution on non-Run hosts and treat it as implicit
+        // revision.type=format.
+        if (element is Run && kind is null && stripped.Count == 0)
+            throw new ArgumentException(
+                "revision.* attribution on a run requires an action. "
+                + "Either pass other --prop (e.g. --prop font=Arial) to record a "
+                + "format change, or specify --prop revision.type=ins|del|moveFrom|moveTo "
+                + "to mark the run as an insertion / deletion / move.");
+        if (element is Run && kind is "format" && stripped.Count == 0)
+            throw new ArgumentException(
+                "revision.type=format on a run requires a real property change "
+                + "(other --prop alongside) — an rPrChange with an empty "
+                + "before/after snapshot records no change.");
+
         // Run + ins/del/moveFrom/moveTo: wrap the run in the matching
         // tracked-change element instead of producing an rPrChange. The
         // legacy code path treated every `revision.type` on a Run as
@@ -986,6 +1020,7 @@ public partial class WordHandler
                     break;
                 }
             case "moveFrom":
+                RemoveMoveFromRangeMarkers((MoveFromRun)rev.Element);
                 rev.Element.Remove();
                 break;
             case "moveTo":
@@ -997,6 +1032,7 @@ public partial class WordHandler
                         foreach (var child in mt.ChildElements.ToList())
                             parent.InsertBefore(child.CloneNode(true), mt);
                     }
+                    RemoveMoveToRangeMarkers(mt);
                     mt.Remove();
                     break;
                 }
@@ -1110,13 +1146,38 @@ public partial class WordHandler
                         foreach (var child in mf.ChildElements.ToList())
                             parent.InsertBefore(child.CloneNode(true), mf);
                     }
+                    RemoveMoveFromRangeMarkers(mf);
                     mf.Remove();
                     break;
                 }
             case "moveTo":
+                RemoveMoveToRangeMarkers((MoveToRun)rev.Element);
                 rev.Element.Remove();
                 break;
         }
+    }
+
+    /// <summary>Strip the MoveFromRangeStart / MoveFromRangeEnd siblings
+    /// that bracket <paramref name="moveFrom"/>. Emitted by
+    /// MoveWithTrackChange as immediate siblings (preceding / following);
+    /// no-op when they're absent (e.g. legacy docs authored without
+    /// range markers, or non-paired moveFrom runs).</summary>
+    private static void RemoveMoveFromRangeMarkers(MoveFromRun moveFrom)
+    {
+        var prev = moveFrom.PreviousSibling();
+        if (prev is MoveFromRangeStart mfStart) mfStart.Remove();
+        var next = moveFrom.NextSibling();
+        if (next is MoveFromRangeEnd mfEnd) mfEnd.Remove();
+    }
+
+    /// <summary>Companion to <see cref="RemoveMoveFromRangeMarkers"/> for
+    /// the moveTo side of the pair.</summary>
+    private static void RemoveMoveToRangeMarkers(MoveToRun moveTo)
+    {
+        var prev = moveTo.PreviousSibling();
+        if (prev is MoveToRangeStart mtStart) mtStart.Remove();
+        var next = moveTo.NextSibling();
+        if (next is MoveToRangeEnd mtEnd) mtEnd.Remove();
     }
 
     /// <summary>Pull the most representative human-readable text snippet for

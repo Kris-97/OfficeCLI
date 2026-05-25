@@ -1304,6 +1304,42 @@ public partial class WordHandler
         srcParent.ReplaceChild(moveFrom, element);
         moveFrom.AppendChild(element);
 
+        // Range markers bracket each half of the move pair. Without them
+        // Word does not recognise the moveFrom/moveTo runs as a "move" —
+        // on open it pops "found unreadable content" and silently demotes
+        // the pair to del+ins (the inner w:id pair is lost). Schema
+        // permits the markers to be omitted (validate stays green), but
+        // Word's UI keys off the shared `w:name` between MoveFromRangeStart
+        // and MoveToRangeStart to bind the two halves. Per ECMA-376 §17.13.5.20-23.
+        //
+        // Convention:
+        //   - moveFromRangeStart / moveToRangeStart carry w:name="Move_{id}";
+        //     identical on both sides so Word pairs them.
+        //   - The four range markers reuse `sharedId` as their `w:id` so
+        //     accept/reject can find them by id alongside the inner runs.
+        var moveName = $"Move_{sharedId}";
+        var mfRangeStart = new MoveFromRangeStart
+        {
+            Id = sharedId,
+            Author = tcAuthor,
+            Date = tcDt,
+            Name = moveName,
+        };
+        var mfRangeEnd = new MoveFromRangeEnd { Id = sharedId };
+        moveFrom.InsertBeforeSelf(mfRangeStart);
+        moveFrom.InsertAfterSelf(mfRangeEnd);
+
+        var mtRangeStart = new MoveToRangeStart
+        {
+            Id = sharedId,
+            Author = tcAuthor,
+            Date = tcDt,
+            Name = moveName,
+        };
+        var mtRangeEnd = new MoveToRangeEnd { Id = sharedId };
+        moveTo.InsertBeforeSelf(mtRangeStart);
+        moveTo.InsertAfterSelf(mtRangeEnd);
+
         _doc.MainDocumentPart?.Document?.Save();
 
         // Path to dest run: moveTo is now a sibling among target paragraph's
