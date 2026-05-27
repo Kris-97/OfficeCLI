@@ -1136,7 +1136,10 @@ public partial class WordHandler
         //      (only when --prop text=... auto-created an inner run)
         // Each gets a distinct auto-allocated revision id sharing the same
         // author + date — accept-all sees them as related but independent.
-        if (string.IsNullOrEmpty(pTcKind))
+        // An explicit `revision.type=ins` takes the same path as the bare-author
+        // auto-insert (empty pTcKind); only `revision.type=format` diverges to
+        // the pPrChange branch above.
+        if (string.IsNullOrEmpty(pTcKind) || pTcKind.Trim().ToLowerInvariant() == "ins")
         {
             string? hTcAuthor = null, hTcDate = null, hTcId = null;
             properties.TryGetValue("revision.author", out hTcAuthor);
