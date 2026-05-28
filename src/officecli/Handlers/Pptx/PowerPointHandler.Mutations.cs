@@ -474,6 +474,14 @@ public partial class PowerPointHandler
                 throw new ArgumentException($"{elementType} {elementIdx} not found (total: {pics.Count})");
 
             var pic = pics[elementIdx - 1];
+            // R46 Blocker-1: audio/video may have associated p:timing entries
+            // (autoPlay, click-to-play, etc). Strip animation/timing refs to the
+            // picture's spId before removing the picture, mirroring the shape
+            // branch above. Otherwise PowerPoint rejects the file on open with
+            // a repair error referencing the dangling spTgt.
+            var picId = pic.NonVisualPictureProperties?.NonVisualDrawingProperties?.Id?.Value ?? 0;
+            if (picId > 0)
+                RemoveShapeAnimations(GetSlide(slidePart), (uint)picId);
             RemovePictureWithCleanup(slidePart, shapeTree, pic);
         }
         else if (elementType == "table")

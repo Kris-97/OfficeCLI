@@ -1566,6 +1566,19 @@ public partial class PowerPointHandler
         foreach (var node in toRemove)
             node!.Remove();
 
+        // R46 Blocker-1: media playback nodes — <p:video>/<p:audio> wrapping a
+        // CommonMediaNode whose target is the deleted shape — live as direct
+        // children of the root childTnLst (siblings of the mainSeq <p:seq>),
+        // not under MainSequence. The walk-up above never reaches them, so a
+        // dangling spTgt survives and PowerPoint flags the file as needs-repair.
+        // Remove every <p:video>/<p:audio> whose nested spTgt matches shapeId.
+        foreach (var mediaNode in timing.Descendants<DocumentFormat.OpenXml.Presentation.Video>()
+                     .Cast<OpenXmlElement>()
+                     .Concat(timing.Descendants<DocumentFormat.OpenXml.Presentation.Audio>())
+                     .Where(m => m.Descendants<ShapeTarget>().Any(st => st.ShapeId?.Value == spIdStr))
+                     .ToList())
+            mediaNode.Remove();
+
         // Remove from bldLst (both bldP for shapes and bldGraphic for charts).
         var bldLst = timing.BuildList;
         if (bldLst != null)
