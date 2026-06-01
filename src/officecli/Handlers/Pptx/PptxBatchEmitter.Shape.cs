@@ -323,6 +323,20 @@ public static partial class PptxBatchEmitter
 
         if (full.Children == null) return;
 
+        // CONSISTENCY(group-id-autoassign): track the items boundary so we
+        // can post-strip `id` from every prop bag emitted for this group's
+        // descendants. cNvPr ids in a source group often collide with ids
+        // already claimed by sibling slide-level shapes (PowerPoint reuses
+        // small-range ids — 10025, etc. — when authoring groups), so
+        // AcquireShapeId throws on replay before the group's children are
+        // even placed. Auto-assignment via GenerateUniqueShapeId (10000+
+        // counter) sidesteps the collision; group-descendant shapes are
+        // resolved positionally on subsequent Set ops, so the auto-assigned
+        // id is never externally referenced. Recursive EmitGroup calls
+        // delegate the same post-strip to their own scope; the inner pass
+        // is a no-op when the descendants already had their id stripped.
+        int groupChildItemsStart = items.Count;
+
         // Group children resolve through the same dispatch as slide-level
         // children. Replay parent for the group's children is the group's
         // positional path; children get fresh ordinals within the group scope.
@@ -380,6 +394,17 @@ public static partial class PptxBatchEmitter
                         Reason: "group child type deferred to PR2 / unrecognized"));
                     break;
             }
+        }
+
+        // Strip `id` from every `add` BatchItem emitted between the boundary
+        // and now — these are the group's descendants. Set ops within the
+        // group reference shapes positionally; they don't carry `id` to
+        // begin with, so the filter is naturally a no-op for them.
+        for (int gi = groupChildItemsStart; gi < items.Count; gi++)
+        {
+            var bi = items[gi];
+            if (bi.Command == "add" && bi.Props != null && bi.Props.ContainsKey("id"))
+                bi.Props.Remove("id");
         }
     }
 

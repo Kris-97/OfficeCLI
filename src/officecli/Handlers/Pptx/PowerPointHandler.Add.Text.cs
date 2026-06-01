@@ -448,11 +448,17 @@ public partial class PowerPointHandler
     {
                 // Add a run to a paragraph: /slide[N]/shape[M]/paragraph[P] or /slide[N]/shape[M]
                 //   also: /slide[N]/placeholder[X]/paragraph[P] or /slide[N]/placeholder[X]
+                //   also (group-nested): /slide[N]/group[G]/.../shape[M][/paragraph[P]] with
+                //   one or more intervening group[] segments (PowerPoint allows arbitrarily
+                //   nested group trees; AddParagraph / SetParagraph already accept the same
+                //   shape — without this, dump→replay of a textbox sitting inside a group
+                //   reported "Runs must be added to a shape/placeholder or paragraph" for
+                //   every per-run set op, even though Get exposed the path verbatim).
                 // CONSISTENCY(path-aliases): accept short-form `/p[N]` alongside `/paragraph[N]`.
                 // CONSISTENCY(placeholder-paragraph-path): mirror the dual route that
                 // AddParagraph and SetParagraph already accept.
-                var runParaMatch = Regex.Match(parentPath, @"^/slide\[(\d+)\]/shape\[(\d+)\](?:/(?:paragraph|p)\[(\d+)\])?$");
-                var runPhMatch = runParaMatch.Success ? null : Regex.Match(parentPath, @"^/slide\[(\d+)\]/placeholder\[(\w+)\](?:/(?:paragraph|p)\[(\d+)\])?$");
+                var runParaMatch = Regex.Match(parentPath, @"^/slide\[(\d+)\]((?:/group\[\d+\])*)/shape\[(\d+)\](?:/(?:paragraph|p)\[(\d+)\])?$");
+                var runPhMatch = runParaMatch.Success ? null : Regex.Match(parentPath, @"^/slide\[(\d+)\]((?:/group\[\d+\])*)/placeholder\[(\w+)\](?:/(?:paragraph|p)\[(\d+)\])?$");
                 if (!runParaMatch.Success && (runPhMatch == null || !runPhMatch.Success))
                     throw new ArgumentException("Runs must be added to a shape/placeholder or paragraph: /slide[N]/shape[M], /slide[N]/placeholder[X], /slide[N]/shape[M]/paragraph[P], or /slide[N]/placeholder[X]/paragraph[P]");
 
@@ -464,21 +470,59 @@ public partial class PowerPointHandler
                 if (runParaMatch.Success)
                 {
                     runSlideIdx = int.Parse(runParaMatch.Groups[1].Value);
-                    runShapeIdx = int.Parse(runParaMatch.Groups[2].Value);
-                    (runSlidePart, runShape) = ResolveShape(runSlideIdx, runShapeIdx);
-                    paraGroup = runParaMatch.Groups[3];
+                    var grpChain = runParaMatch.Groups[2].Value;
+                    runShapeIdx = int.Parse(runParaMatch.Groups[3].Value);
+                    if (string.IsNullOrEmpty(grpChain))
+                    {
+                        (runSlidePart, runShape) = ResolveShape(runSlideIdx, runShapeIdx);
+                    }
+                    else
+                    {
+                        // CONSISTENCY(pptx-group-flatten): walk down the
+                        // /group[N]/.../group[M]/shape[K] chain so AddRun can
+                        // target a textbox sitting inside a group. Path
+                        // semantics mirror InsertAtPosition (Helpers.Path.cs)
+                        // — group children are filtered to content elements
+                        // (skip NonVisualGroupShapeProperties / GroupShapeProperties).
+                        var sps = GetSlideParts().ToList();
+                        if (runSlideIdx < 1 || runSlideIdx > sps.Count)
+                            throw new ArgumentException($"Slide {runSlideIdx} not found (total: {sps.Count})");
+                        runSlidePart = sps[runSlideIdx - 1];
+                        OpenXmlCompositeElement scope = GetSlide(runSlidePart).CommonSlideData?.ShapeTree
+                            ?? throw new ArgumentException($"Slide {runSlideIdx} has no shapes");
+                        foreach (Match gm in Regex.Matches(grpChain, @"/group\[(\d+)\]"))
+                        {
+                            var gIdx = int.Parse(gm.Groups[1].Value);
+                            var groupsHere = scope.Elements<GroupShape>().ToList();
+                            if (gIdx < 1 || gIdx > groupsHere.Count)
+                                throw new ArgumentException($"Group {gIdx} not found in scope (have {groupsHere.Count})");
+                            scope = groupsHere[gIdx - 1];
+                        }
+                        var shapesInScope = scope.Elements<Shape>().ToList();
+                        if (runShapeIdx < 1 || runShapeIdx > shapesInScope.Count)
+                            throw new ArgumentException($"Shape {runShapeIdx} not found in group scope (have {shapesInScope.Count})");
+                        runShape = shapesInScope[runShapeIdx - 1];
+                    }
+                    paraGroup = runParaMatch.Groups[4];
                 }
                 else
                 {
                     runSlideIdx = int.Parse(runPhMatch!.Groups[1].Value);
-                    var phToken = runPhMatch.Groups[2].Value;
+                    // Placeholder paths nested inside a group are rare in
+                    // PowerPoint (placeholders typically live at slide-level),
+                    // but accept the syntax for symmetry with the shape branch
+                    // so the regex shape (slide / group-chain / placeholder /
+                    // paragraph) is uniform. Placeholder resolution stays at
+                    // the slide level — phType / phIndex matching scans the
+                    // entire slide; group nesting is a no-op for the lookup.
+                    var phToken = runPhMatch.Groups[3].Value;
                     var slideParts = GetSlideParts().ToList();
                     if (runSlideIdx < 1 || runSlideIdx > slideParts.Count)
                         throw new ArgumentException($"Slide {runSlideIdx} not found (total: {slideParts.Count})");
                     runSlidePart = slideParts[runSlideIdx - 1];
                     runShape = ResolvePlaceholderShape(runSlidePart, phToken);
                     runShapeIdx = 1;
-                    paraGroup = runPhMatch.Groups[3];
+                    paraGroup = runPhMatch.Groups[4];
                 }
 
                 var runTextBody = runShape.TextBody
