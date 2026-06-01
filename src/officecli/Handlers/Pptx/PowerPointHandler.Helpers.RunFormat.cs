@@ -158,19 +158,32 @@ public partial class PowerPointHandler
             pos: gs.Position?.Value
         )).ToList();
 
-        // Check if positions deviate >1% from even distribution (1000 units)
+        // CONSISTENCY(gradient-pos-permille): preserve the OOXML permille
+        // pos verbatim. Previously the emit divided pos by 1000 (truncating
+        // to whole-percent) and only emitted when the rounded percent
+        // diverged from the even-distribution baseline by more than 1%.
+        // That hid sub-percent drift: a 4-stop gradient with stops at
+        // [0, 33000, 66000, 100000] (permille) compared each pos against
+        // the even baseline [0, 33333, 66667, 100000], saw a 333-unit
+        // (0.33%) gap, and decided NOT to emit pos — so BuildGradientFill
+        // fell back to the even-distribution computation and replay shifted
+        // stop 2 from 33000 to 33333. Reverse the comparison: emit pos
+        // when ANY stop deviates from even-distribution (zero tolerance),
+        // and use a `p` prefix on the raw permille value so the parser can
+        // distinguish it from the legacy percent form (`@33` stays a
+        // percent; `@p33000` is raw permille).
         bool hasCustomPos = false;
         int n = stopData.Count;
         for (int i = 0; i < n; i++)
         {
             var expectedPos = n == 1 ? 0 : (int)((long)i * 100000 / (n - 1));
             var actualPos = (int)(stopData[i].pos ?? 0);
-            if (Math.Abs(actualPos - expectedPos) > 1000) { hasCustomPos = true; break; }
+            if (actualPos != expectedPos) { hasCustomPos = true; break; }
         }
 
         var stopStrs = stopData.Select((s, i) =>
             hasCustomPos && s.pos.HasValue
-                ? $"{s.color}@{s.pos.Value / 1000}"
+                ? $"{s.color}@p{s.pos.Value}"
                 : s.color
         ).ToList();
 

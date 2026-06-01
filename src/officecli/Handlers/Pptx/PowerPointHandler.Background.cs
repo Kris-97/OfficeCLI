@@ -837,9 +837,33 @@ public partial class PowerPointHandler
             var cp = colorParts[i];
             int pos;
             var atIdx = cp.IndexOf('@');
-            if (atIdx >= 0 && int.TryParse(cp[(atIdx + 1)..], out var pct))
+            if (atIdx >= 0)
             {
-                pos = Math.Clamp(pct, 0, 100) * 1000;
+                // CONSISTENCY(gradient-pos-permille): accept two forms after
+                // the @ separator.
+                //  - "@NN"      → percent (0..100), legacy / human-input form
+                //  - "@pNNNNN"  → raw OOXML permille (0..100000), the form
+                //                 ReadGradientString now emits so dump→replay
+                //                 preserves sub-percent stop positions
+                //                 byte-equal. Without the explicit "p"
+                //                 prefix, an emitted "@33000" would clamp to
+                //                 100 (the legacy form's range cap).
+                var rest = cp[(atIdx + 1)..];
+                if (rest.Length > 0 && (rest[0] == 'p' || rest[0] == 'P')
+                    && int.TryParse(rest[1..], out var permille))
+                {
+                    pos = Math.Clamp(permille, 0, 100000);
+                }
+                else if (int.TryParse(rest, out var pct))
+                {
+                    pos = Math.Clamp(pct, 0, 100) * 1000;
+                }
+                else
+                {
+                    pos = colorParts.Count == 1
+                        ? 0
+                        : (int)((long)i * 100000 / (colorParts.Count - 1));
+                }
                 cp = cp[..atIdx];
             }
             else
