@@ -109,16 +109,28 @@ public static partial class PptxBatchEmitter
         // shape itself, and (b) the FIRST run's rPr.hlinkClick (a single-run
         // convenience for Get callers — so a fully hyperlinked textbox
         // surfaces its href at the shape level without descending into
-        // /p[1]/r[1]). Dump→batch wants source (a) only: the per-run emit
-        // path (EmitParagraph / EmitFirstRunAsSet) already carries the
-        // run-level link via the run's own Format bag, so emitting it
-        // again at shape-level fabricates a cNvPr.hlinkClick the source
-        // never had. Probe the live XML to disambiguate; strip when only
-        // the run-derived shortcut path applies.
-        if (shapeProps.ContainsKey("link") && !ppt.ShapeHasCNvPrHyperlink(shapeNode.Path))
+        // /p[1]/r[1]). NodeBuilder prefers (b) when present, so the bag's
+        // url may not match the shape's cNvPr.hlinkClick at all when a
+        // shape carries BOTH. Probe the live XML:
+        //   - no shape-level hlink → strip (run emit re-adds it).
+        //   - shape-level hlink present → overwrite the bag's url/tooltip
+        //     with the cNvPr ones so the emitted `add shape link=` reflects
+        //     the actual shape-level target. The per-run emit still adds
+        //     its own (possibly different) run-level link separately.
+        if (shapeProps.ContainsKey("link"))
         {
-            shapeProps.Remove("link");
-            shapeProps.Remove("tooltip");
+            var (hasShape, shapeUrl, shapeTip) = ppt.GetShapeCNvPrHyperlinkInfo(shapeNode.Path);
+            if (!hasShape)
+            {
+                shapeProps.Remove("link");
+                shapeProps.Remove("tooltip");
+            }
+            else
+            {
+                if (!string.IsNullOrEmpty(shapeUrl)) shapeProps["link"] = shapeUrl!;
+                if (!string.IsNullOrEmpty(shapeTip)) shapeProps["tooltip"] = shapeTip!;
+                else shapeProps.Remove("tooltip");
+            }
         }
         DeferSlideJumpLink(shapeProps, replayPath, ctx);
 

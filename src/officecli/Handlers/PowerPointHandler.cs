@@ -1712,30 +1712,57 @@ public partial class PowerPointHandler : IDocumentHandler
     // the cNvPr — otherwise the run-level emit duplicates and AddShape
     // fabricates a shape-level hyperlink that the source never had.
     internal bool ShapeHasCNvPrHyperlink(string shapePath)
+        => GetShapeCNvPrHyperlinkInfo(shapePath).HasShapeLink;
+
+    // CONSISTENCY(shape-link-source-readback): when a shape carries BOTH a
+    // cNvPr.hlinkClick AND a first-run rPr.hlinkClick, NodeBuilder promotes
+    // the RUN url onto Format["link"] (first-run wins; line ~960). The dump
+    // emitter needs the actual shape-level url so it can emit `add shape
+    // link=<shape-url>` instead of inheriting the run url. Return the
+    // shape-level url + tooltip (or null/empty) alongside the boolean.
+    internal (bool HasShapeLink, string? Url, string? Tooltip) GetShapeCNvPrHyperlinkInfo(string shapePath)
     {
+        // Accept positional /shape[N] and @id= forms. NodeBuilder emits the
+        // @id= form for shapes with a known cNvPr.Id (the typical case);
+        // the typed dump walk passes shapeNode.Path verbatim.
         var m = Regex.Match(shapePath,
-            @"^/slide\[(\d+)\]((?:/group\[\d+\])*)/(?:shape|textbox|title|equation|placeholder)\[(\d+)\]$");
-        if (!m.Success) return false;
+            @"^/slide\[(\d+)\]((?:/group\[\d+\])*)/(?:shape|textbox|title|equation|placeholder)\[(@id=)?(\d+)\]$");
+        if (!m.Success) return (false, null, null);
         var slideIdx = int.Parse(m.Groups[1].Value);
         var grpChain = m.Groups[2].Value;
-        var shapeIdx = int.Parse(m.Groups[3].Value);
+        var byId = m.Groups[3].Value.Length > 0;
+        var shapeIdx = int.Parse(m.Groups[4].Value);
         var parts = GetSlideParts().ToList();
-        if (slideIdx < 1 || slideIdx > parts.Count) return false;
+        if (slideIdx < 1 || slideIdx > parts.Count) return (false, null, null);
         var slidePart = parts[slideIdx - 1];
         OpenXmlCompositeElement? scope = GetSlide(slidePart).CommonSlideData?.ShapeTree;
-        if (scope == null) return false;
+        if (scope == null) return (false, null, null);
         foreach (Match gm in Regex.Matches(grpChain, @"/group\[(\d+)\]"))
         {
             var gIdx = int.Parse(gm.Groups[1].Value);
             var groupsHere = scope.Elements<GroupShape>().ToList();
-            if (gIdx < 1 || gIdx > groupsHere.Count) return false;
+            if (gIdx < 1 || gIdx > groupsHere.Count) return (false, null, null);
             scope = groupsHere[gIdx - 1];
         }
-        var shapes = scope.Elements<Shape>().ToList();
-        if (shapeIdx < 1 || shapeIdx > shapes.Count) return false;
-        var shape = shapes[shapeIdx - 1];
+        Shape? shape;
+        if (byId)
+        {
+            shape = scope.Elements<Shape>().FirstOrDefault(
+                s => s.NonVisualShapeProperties?.NonVisualDrawingProperties?.Id?.Value == (uint)shapeIdx);
+            if (shape == null) return (false, null, null);
+        }
+        else
+        {
+            var shapes = scope.Elements<Shape>().ToList();
+            if (shapeIdx < 1 || shapeIdx > shapes.Count) return (false, null, null);
+            shape = shapes[shapeIdx - 1];
+        }
         var nvDp = shape.NonVisualShapeProperties?.NonVisualDrawingProperties;
-        return nvDp?.GetFirstChild<DocumentFormat.OpenXml.Drawing.HyperlinkOnClick>() != null;
+        var hlClick = nvDp?.GetFirstChild<DocumentFormat.OpenXml.Drawing.HyperlinkOnClick>();
+        if (hlClick == null) return (false, null, null);
+        var url = ReadHyperlinkOnClickUrl(hlClick, slidePart);
+        var tip = hlClick.Tooltip?.Value;
+        return (true, url, tip);
     }
 
     // Resolve a shape path's blipFill image bytes (image fill on a non-Picture
