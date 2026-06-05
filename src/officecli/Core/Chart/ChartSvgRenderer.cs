@@ -320,9 +320,9 @@ internal partial class ChartSvgRenderer
                         // are vertical; the perpendicular SHORT HORIZONTAL caps the
                         // test checks for are emitted as the whisker-end verticals'
                         // crossbars below).
-                        if (showPlus)
+                        if (showPlus && !eb.NoEndCap)
                             sb.AppendLine($"        <line x1=\"{xPlus:0.#}\" y1=\"{cy - capH:0.#}\" x2=\"{xPlus:0.#}\" y2=\"{cy + capH:0.#}\" stroke=\"{ebColor}\" stroke-width=\"{eb.Width:0.#}\"/>");
-                        if (showMinus)
+                        if (showMinus && !eb.NoEndCap)
                             sb.AppendLine($"        <line x1=\"{xMinus:0.#}\" y1=\"{cy - capH:0.#}\" x2=\"{xMinus:0.#}\" y2=\"{cy + capH:0.#}\" stroke=\"{ebColor}\" stroke-width=\"{eb.Width:0.#}\"/>");
                     }
                 }
@@ -501,9 +501,9 @@ internal partial class ChartSvgRenderer
                         var yTop = showPlus ? oy + ph - ((rawVal + plusErr - niceMin) / span) * ph : byTop;
                         var yBot = showMinus ? oy + ph - ((rawVal - minusErr - niceMin) / span) * ph : byTop;
                         sb.AppendLine($"        <line x1=\"{bx:0.#}\" y1=\"{yTop:0.#}\" x2=\"{bx:0.#}\" y2=\"{yBot:0.#}\" stroke=\"{ebColor}\" stroke-width=\"{eb.Width:0.#}\"/>");
-                        if (showPlus)
+                        if (showPlus && !eb.NoEndCap)
                             sb.AppendLine($"        <line x1=\"{bx - capW:0.#}\" y1=\"{yTop:0.#}\" x2=\"{bx + capW:0.#}\" y2=\"{yTop:0.#}\" stroke=\"{ebColor}\" stroke-width=\"{eb.Width:0.#}\"/>");
-                        if (showMinus)
+                        if (showMinus && !eb.NoEndCap)
                             sb.AppendLine($"        <line x1=\"{bx - capW:0.#}\" y1=\"{yBot:0.#}\" x2=\"{bx + capW:0.#}\" y2=\"{yBot:0.#}\" stroke=\"{ebColor}\" stroke-width=\"{eb.Width:0.#}\"/>");
                     }
                 }
@@ -1003,7 +1003,7 @@ internal partial class ChartSvgRenderer
 
     public void RenderPieChartSvg(StringBuilder sb, List<(string name, double[] values)> series,
         string[] categories, List<string> colors, int svgW, int svgH, double holeRatio = 0.0, bool showDataLabels = false,
-        bool showVal = false, bool showPercent = false, bool showCatName = false)
+        bool showVal = false, bool showPercent = false, bool showCatName = false, List<double>? explosions = null)
     {
         var values = series.FirstOrDefault().values ?? [];
         if (values.Length == 0) return;
@@ -1013,6 +1013,11 @@ internal partial class ChartSvgRenderer
         var cx = svgW / 2.0;
         var cy = svgH / 2.0;
         var r = Math.Min(svgW, svgH) * 0.42;
+        // Slice explosion: each slice's center shifts outward along its bisector
+        // by explosion% of the radius. Shrink the base radius so the most-exploded
+        // slice still fits inside the plot area (PowerPoint scales the pie down).
+        var maxExpl = explosions != null && explosions.Count > 0 ? explosions.Max() : 0.0;
+        if (maxExpl > 0) r /= (1 + maxExpl);
         var innerR = r * holeRatio;
         var startAngle = -Math.PI / 2;
 
@@ -1022,8 +1027,14 @@ internal partial class ChartSvgRenderer
             var endAngle = startAngle + sliceAngle;
             var color = i < colors.Count ? colors[i] : DefaultColors[i % DefaultColors.Length];
 
+            // Per-slice exploded center: push out along the slice bisector.
+            var expl = explosions != null && i < explosions.Count ? explosions[i] : 0.0;
+            var midAngle = startAngle + sliceAngle / 2;
+            var cx0 = expl > 0 ? cx + r * expl * Math.Cos(midAngle) : cx;
+            var cy0 = expl > 0 ? cy + r * expl * Math.Sin(midAngle) : cy;
+
             if (values.Length == 1 && holeRatio <= 0)
-                sb.AppendLine($"        <circle cx=\"{cx:0.#}\" cy=\"{cy:0.#}\" r=\"{r:0.#}\" fill=\"{color}\" opacity=\"0.85\"/>");
+                sb.AppendLine($"        <circle cx=\"{cx0:0.#}\" cy=\"{cy0:0.#}\" r=\"{r:0.#}\" fill=\"{color}\" opacity=\"0.85\"/>");
             else if (holeRatio > 0)
             {
                 // A single ring segment spanning ~full circle (one data point,
@@ -1034,24 +1045,24 @@ internal partial class ChartSvgRenderer
                 // to catch float rounding.
                 if (sliceAngle >= 2 * Math.PI - 1e-6)
                 {
-                    sb.AppendLine($"        <path d=\"M {cx - r:0.#},{cy:0.#} A {r:0.#},{r:0.#} 0 1,1 {cx + r:0.#},{cy:0.#} A {r:0.#},{r:0.#} 0 1,1 {cx - r:0.#},{cy:0.#} Z M {cx - innerR:0.#},{cy:0.#} A {innerR:0.#},{innerR:0.#} 0 1,1 {cx + innerR:0.#},{cy:0.#} A {innerR:0.#},{innerR:0.#} 0 1,1 {cx - innerR:0.#},{cy:0.#} Z\" fill=\"{color}\" fill-rule=\"evenodd\" opacity=\"0.85\"/>");
+                    sb.AppendLine($"        <path d=\"M {cx0 - r:0.#},{cy0:0.#} A {r:0.#},{r:0.#} 0 1,1 {cx0 + r:0.#},{cy0:0.#} A {r:0.#},{r:0.#} 0 1,1 {cx0 - r:0.#},{cy0:0.#} Z M {cx0 - innerR:0.#},{cy0:0.#} A {innerR:0.#},{innerR:0.#} 0 1,1 {cx0 + innerR:0.#},{cy0:0.#} A {innerR:0.#},{innerR:0.#} 0 1,1 {cx0 - innerR:0.#},{cy0:0.#} Z\" fill=\"{color}\" fill-rule=\"evenodd\" opacity=\"0.85\"/>");
                 }
                 else
                 {
-                    var ox1 = cx + r * Math.Cos(startAngle); var oy1 = cy + r * Math.Sin(startAngle);
-                    var ox2 = cx + r * Math.Cos(endAngle); var oy2 = cy + r * Math.Sin(endAngle);
-                    var ix1 = cx + innerR * Math.Cos(endAngle); var iy1 = cy + innerR * Math.Sin(endAngle);
-                    var ix2 = cx + innerR * Math.Cos(startAngle); var iy2 = cy + innerR * Math.Sin(startAngle);
+                    var ox1 = cx0 + r * Math.Cos(startAngle); var oy1 = cy0 + r * Math.Sin(startAngle);
+                    var ox2 = cx0 + r * Math.Cos(endAngle); var oy2 = cy0 + r * Math.Sin(endAngle);
+                    var ix1 = cx0 + innerR * Math.Cos(endAngle); var iy1 = cy0 + innerR * Math.Sin(endAngle);
+                    var ix2 = cx0 + innerR * Math.Cos(startAngle); var iy2 = cy0 + innerR * Math.Sin(startAngle);
                     var largeArc = sliceAngle > Math.PI ? 1 : 0;
                     sb.AppendLine($"        <path d=\"M {ox1:0.#},{oy1:0.#} A {r:0.#},{r:0.#} 0 {largeArc},1 {ox2:0.#},{oy2:0.#} L {ix1:0.#},{iy1:0.#} A {innerR:0.#},{innerR:0.#} 0 {largeArc},0 {ix2:0.#},{iy2:0.#} Z\" fill=\"{color}\" opacity=\"0.85\"/>");
                 }
             }
             else
             {
-                var x1 = cx + r * Math.Cos(startAngle); var y1 = cy + r * Math.Sin(startAngle);
-                var x2 = cx + r * Math.Cos(endAngle); var y2 = cy + r * Math.Sin(endAngle);
+                var x1 = cx0 + r * Math.Cos(startAngle); var y1 = cy0 + r * Math.Sin(startAngle);
+                var x2 = cx0 + r * Math.Cos(endAngle); var y2 = cy0 + r * Math.Sin(endAngle);
                 var largeArc = sliceAngle > Math.PI ? 1 : 0;
-                sb.AppendLine($"        <path d=\"M {cx:0.#},{cy:0.#} L {x1:0.#},{y1:0.#} A {r:0.#},{r:0.#} 0 {largeArc},1 {x2:0.#},{y2:0.#} Z\" fill=\"{color}\" opacity=\"0.85\"/>");
+                sb.AppendLine($"        <path d=\"M {cx0:0.#},{cy0:0.#} L {x1:0.#},{y1:0.#} A {r:0.#},{r:0.#} 0 {largeArc},1 {x2:0.#},{y2:0.#} Z\" fill=\"{color}\" opacity=\"0.85\"/>");
             }
             startAngle = endAngle;
         }
@@ -1063,8 +1074,11 @@ internal partial class ChartSvgRenderer
             {
                 var sliceAngle = 2 * Math.PI * values[i] / total;
                 var midAngle = labelAngle + sliceAngle / 2;
-                var lx = cx + labelR * Math.Cos(midAngle);
-                var ly = cy + labelR * Math.Sin(midAngle);
+                var expl = explosions != null && i < explosions.Count ? explosions[i] : 0.0;
+                var lcx = expl > 0 ? cx + r * expl * Math.Cos(midAngle) : cx;
+                var lcy = expl > 0 ? cy + r * expl * Math.Sin(midAngle) : cy;
+                var lx = lcx + labelR * Math.Cos(midAngle);
+                var ly = lcy + labelR * Math.Sin(midAngle);
                 var pct = values[i] / total * 100;
                 string label;
                 if (showVal && !showPercent)
@@ -1646,6 +1660,11 @@ internal partial class ChartSvgRenderer
         // default; "inEnd" places it inside the bar near its end.
         public string DataLabelPos { get; set; } = "outEnd";
         public double HoleRatio { get; set; }
+        // Pie/doughnut slice explosion as a fraction of radius per data point
+        // (index = data point). Empty list = no explosion. Populated from the
+        // series-level c:explosion (applies to all points) and/or per-point
+        // c:dPt/c:explosion overrides.
+        public List<double> Explosions { get; set; } = [];
         public bool IsStacked { get; set; }
         public bool IsPercent { get; set; }
         public bool IsWaterfall { get; set; }
@@ -1761,6 +1780,7 @@ internal partial class ChartSvgRenderer
         public double Value { get; set; } = 1; // the error amount
         public string? Color { get; set; }
         public double Width { get; set; } = 1;
+        public bool NoEndCap { get; set; }
     }
 
     /// <summary>
@@ -1871,6 +1891,36 @@ internal partial class ChartSvgRenderer
             var holeSizeEl = chartTypeEl?.Elements().FirstOrDefault(e => e.LocalName == "holeSize");
             var holeSizeVal = holeSizeEl?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value;
             info.HoleRatio = (holeSizeVal != null && int.TryParse(holeSizeVal, out var hs) ? hs : 10) / 100.0; // OOXML spec default: 10%
+        }
+
+        // Pie/doughnut slice explosion. Series-level c:explosion applies to every
+        // data point; per-point c:dPt/c:explosion overrides a single slice. Values
+        // are percentages of the pie radius (PowerPoint: 20 → 20% of radius).
+        if (isPieType && serElements.Count > 0)
+        {
+            var pieSer = serElements[0];
+            double serExpl = 0;
+            var serExplEl = pieSer.Elements().FirstOrDefault(e => e.LocalName == "explosion");
+            if (serExplEl?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value is string sev
+                && double.TryParse(sev, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var sevd))
+                serExpl = sevd / 100.0;
+            var ptCount = info.Series.Count > 0 ? info.Series[0].values.Length : info.Categories.Length;
+            if (ptCount > 0 && (serExpl > 0 || pieSer.Elements().Any(e => e.LocalName == "dPt")))
+            {
+                var expl = new List<double>();
+                for (int i = 0; i < ptCount; i++) expl.Add(serExpl);
+                foreach (var dPt in pieSer.Elements().Where(e => e.LocalName == "dPt"))
+                {
+                    var idxEl = dPt.Elements().FirstOrDefault(e => e.LocalName == "idx");
+                    var dExplEl = dPt.Elements().FirstOrDefault(e => e.LocalName == "explosion");
+                    if (idxEl?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value is string ivs
+                        && int.TryParse(ivs, out var idx) && idx >= 0 && idx < expl.Count
+                        && dExplEl?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value is string dev
+                        && double.TryParse(dev, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var devd))
+                        expl[idx] = devd / 100.0;
+                }
+                if (expl.Any(e => e > 0)) info.Explosions = expl;
+            }
         }
 
         // Axis info
@@ -2146,6 +2196,9 @@ internal partial class ChartSvgRenderer
                     ebInfo.Direction = ebDir?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value ?? "y";
                     var ebBarType = errBarsEl.Elements().FirstOrDefault(e => e.LocalName == "errBarType");
                     ebInfo.BarType = ebBarType?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value ?? "both";
+                    var ebNoCap = errBarsEl.Elements().FirstOrDefault(e => e.LocalName == "noEndCap");
+                    ebInfo.NoEndCap = ebNoCap?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value is not ("0" or "false");
+                    if (ebNoCap == null) ebInfo.NoEndCap = false;
                     // Read error value from Plus/Minus > NumLit > NumericPoint > v
                     var plusEl = errBarsEl.Elements().FirstOrDefault(e => e.LocalName == "plus");
                     var numPt = plusEl?.Descendants().FirstOrDefault(e => e.LocalName == "v");
@@ -2364,7 +2417,7 @@ internal partial class ChartSvgRenderer
                     info.RotateX > 0 ? info.RotateX : 30);
             else
                 RenderPieChartSvg(sb, info.Series, info.Categories, info.Colors, svgW, svgH, info.HoleRatio, info.ShowDataLabels,
-                    info.ShowDataLabelVal, info.ShowDataLabelPercent, info.ShowDataLabelCatName);
+                    info.ShowDataLabelVal, info.ShowDataLabelPercent, info.ShowDataLabelCatName, info.Explosions);
         }
         else if (chartType.Contains("area"))
         {
