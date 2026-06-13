@@ -351,6 +351,22 @@ public partial class PowerPointHandler
         var cxnMatch = Regex.Match(path, @"^/slide\[(\d+)\]/(?:connector|connection)\[(\d+)\]$");
         if (cxnMatch.Success) return SetConnectorByPath(cxnMatch, properties);
 
+        // Try group-inner connector path (any group depth, index or @id):
+        //   /slide[N]/group[K](/group[L])*/connector[M|@id=…]
+        // dump emits arrowhead/style sets on connectors nested in groups, often
+        // addressed by @id; without this route they hit the generic XML fallback
+        // (LocalName "group"/"connector" don't match p:grpSp/p:cxnSp) and errored.
+        var grpCxnMatch = Regex.Match(path,
+            @"^/slide\[(\d+)\]((?:/group\[[^\]]+\])+)/(?:connector|connection)\[([^\]]+)\]$");
+        if (grpCxnMatch.Success)
+        {
+            var (sp, cxn) = ResolveGroupInnerConnector(
+                int.Parse(grpCxnMatch.Groups[1].Value),
+                grpCxnMatch.Groups[2].Value,
+                grpCxnMatch.Groups[3].Value);
+            return ApplyConnectorProps(sp, cxn, properties);
+        }
+
         // Try nested-depth group inner paragraph/run path:
         //   /slide[N]/group[M](/group[L])+/shape[K]/paragraph[P][/run[R]]
         // CONSISTENCY(group-inner-shape): the depth-1 routes below handle a single

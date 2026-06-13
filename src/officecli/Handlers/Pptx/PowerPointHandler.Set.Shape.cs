@@ -557,6 +557,16 @@ public partial class PowerPointHandler
             throw new ArgumentException($"Connector {cxnIdx} not found (total: {connectors.Count})");
 
         var cxn = connectors[cxnIdx - 1];
+        return ApplyConnectorProps(slidePart, cxn, properties);
+    }
+
+    /// <summary>
+    /// Apply connector property mutations to an already-resolved ConnectionShape.
+    /// Shared by SetConnectorByPath (slide-level) and the group-inner connector
+    /// Set route so a connector nested in a group gets the same property surface.
+    /// </summary>
+    private List<string> ApplyConnectorProps(SlidePart slidePart, ConnectionShape cxn, Dictionary<string, string> properties)
+    {
         var unsupported = new List<string>();
         foreach (var (key, value) in properties)
         {
@@ -912,7 +922,9 @@ public partial class PowerPointHandler
                     // rejected as unsupported_property. Replace any existing
                     // StartConnection/EndConnection rather than append (XML
                     // schema allows only one of each on a connector).
-                    var endpointId = ResolveShapeId(value, shapeTree);
+                    var endpointShapeTree = GetSlide(slidePart).CommonSlideData?.ShapeTree
+                        ?? throw new ArgumentException("Slide has no shape tree");
+                    var endpointId = ResolveShapeId(value, endpointShapeTree);
                     var cxnDrawProps = cxn.NonVisualConnectionShapeProperties
                         ?.GetFirstChild<NonVisualConnectorShapeDrawingProperties>();
                     if (cxnDrawProps == null) { unsupported.Add(key); break; }
@@ -1034,6 +1046,67 @@ public partial class PowerPointHandler
     /// group segment in order, then picks shape[shapeIdx] inside the deepest
     /// group. Shared by AddParagraph's grouped-shape parent route.
     /// </summary>
+    /// <summary>
+    /// Resolve a ConnectionShape inside a (possibly nested) group. Each group
+    /// segment and the final connector segment accept either a positional index
+    /// ([N]) or an @id selector ([@id=K]) — dump addresses grouped connectors by
+    /// @id. Walks every group segment, then locates the connector in the deepest
+    /// group.
+    /// </summary>
+    private (SlidePart slidePart, ConnectionShape cxn) ResolveGroupInnerConnector(
+        int slideIdx, string groupSegs, string connectorToken)
+    {
+        var slideParts = GetSlideParts().ToList();
+        if (slideIdx < 1 || slideIdx > slideParts.Count)
+            throw new ArgumentException($"Slide {slideIdx} not found (total: {slideParts.Count})");
+        var slidePart = slideParts[slideIdx - 1];
+        var shapeTree = GetSlide(slidePart).CommonSlideData?.ShapeTree
+            ?? throw new ArgumentException("Slide has no shape tree");
+
+        OpenXmlCompositeElement current = shapeTree;
+        int depth = 0;
+        foreach (Match seg in Regex.Matches(groupSegs, @"/group\[([^\]]+)\]"))
+        {
+            depth++;
+            var groups = current.Elements<GroupShape>().ToList();
+            var token = seg.Groups[1].Value;
+            int grpIdx = ResolveContainerChildIndex(token, groups.Count,
+                i => groups[i].NonVisualGroupShapeProperties?.NonVisualDrawingProperties);
+            current = groups[grpIdx - 1];
+        }
+        var connectors = current.Elements<ConnectionShape>().ToList();
+        int cxnIdx = ResolveContainerChildIndex(connectorToken, connectors.Count,
+            i => connectors[i].NonVisualConnectionShapeProperties?.NonVisualDrawingProperties);
+        return (slidePart, connectors[cxnIdx - 1]);
+    }
+
+    /// <summary>
+    /// Resolve a child selector token — "N" (1-based positional) or "@id=K" — to
+    /// a 1-based index within a container's typed child list. nvAt returns the
+    /// NonVisualDrawingProperties for the i-th (0-based) child so @id matching can
+    /// read the cNvPr id.
+    /// </summary>
+    private static int ResolveContainerChildIndex(string token, int count,
+        Func<int, NonVisualDrawingProperties?> nvAt)
+    {
+        var idMatch = Regex.Match(token, @"^@id=(\d+)$");
+        if (idMatch.Success)
+        {
+            var wantId = idMatch.Groups[1].Value;
+            for (int i = 0; i < count; i++)
+                if (nvAt(i)?.Id?.Value.ToString() == wantId)
+                    return i + 1;
+            throw new ArgumentException($"No child found with @id={wantId} (total: {count})");
+        }
+        if (int.TryParse(token, out var pos))
+        {
+            if (pos < 1 || pos > count)
+                throw new ArgumentException($"Index {pos} out of range (total: {count})");
+            return pos;
+        }
+        throw new ArgumentException($"Unsupported selector token '{token}': expected an index or @id=K.");
+    }
+
     private (SlidePart slidePart, Shape shape) ResolveGroupInnerShapeBySegments(int slideIdx, string groupSegs, int shapeIdx)
     {
         var slideParts = GetSlideParts().ToList();
