@@ -46,6 +46,34 @@ public partial class PowerPointHandler
     private const string ParagraphPropsHint =
         "valid paragraph props: align, indent, level, marginLeft, marginRight, lineSpacing, spaceBefore, spaceAfter, tabs, link, tooltip — plus any run prop (applied to all runs in the paragraph)";
 
+    // Run-level (character) property keys that, set on a RUNLESS paragraph, must
+    // seed an empty run to land on (see SetParagraphOnShape). Paragraph-level
+    // keys (align/indent/lineSpacing/spaceBefore/…) write to pPr and need no run.
+    private static readonly HashSet<string> RunStyleParagraphKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "size", "font.size", "fontsize", "sz",
+        "color", "fill",
+        "font", "font.latin", "font.ea", "font.eastasia", "font.eastasian",
+        "font.cs", "font.complexscript", "font.complex",
+        "bold", "b", "italic", "i", "underline", "u", "strike",
+        "spacing", "charspacing", "letterspacing", "spc",
+        "baseline", "cap", "allcaps", "smallcaps", "kern",
+    };
+
+    // Copy every attribute and child (deep clone) from one
+    // CT_TextCharacterProperties element (a:rPr / a:endParaRPr / a:defRPr) to
+    // another. Used to round-trip run-style props through a scratch a:rPr when
+    // the only sink is an empty paragraph's a:endParaRPr. Clones nodes rather
+    // than round-tripping OuterXml so inherited xmlns prefixes stay resolvable.
+    private static void CopyCharacterProps(OpenXmlElement source, OpenXmlElement target)
+    {
+        target.RemoveAllChildren();
+        foreach (var attr in source.GetAttributes())
+            target.SetAttribute(attr);
+        foreach (var child in source.Elements())
+            target.AppendChild(child.CloneNode(true));
+    }
+
     private List<string> SetParagraphRunByPath(Match paraRunMatch, Dictionary<string, string> properties)
     {
         var slideIdx = int.Parse(paraRunMatch.Groups[1].Value);
@@ -136,6 +164,45 @@ public partial class PowerPointHandler
         var para = paragraphs[paraIdx - 1];
         var paraRuns = para.Elements<Drawing.Run>().ToList();
         var unsupported = new List<string>();
+
+        // Empty (runless) paragraph carrying run-style props: route size / color
+        // / font.* / bold / ... onto the paragraph's endParaRPr. Without a run the
+        // default branch below calls SetRunOrShapeProperties with an empty run
+        // list and silently drops them — only `cap` had an endParaRPr fallback.
+        // Designers use a runless paragraph with a small endParaRPr font size as
+        // a vertical spacer; PowerPoint sizes the empty line from the endParaRPr,
+        // not from a seeded empty run. The dump configures the shape's
+        // auto-seeded first paragraph via Set (not Add), so `set paragraph[1]
+        // size=1pt` left the spacer's endParaRPr at the inherited body size
+        // (16pt+), inflating its height and pushing all following body text down
+        // on every text slide. Apply the props to a detached run (reusing the
+        // full run-property logic), then transfer its rPr children onto the
+        // endParaRPr. Skip when `text` is present (it builds its own runs).
+        if (paraRuns.Count == 0 && !properties.ContainsKey("text")
+            && properties.Keys.Any(k => RunStyleParagraphKeys.Contains(k)))
+        {
+            var endRPr = para.GetFirstChild<Drawing.EndParagraphRunProperties>();
+            // rPr and endParaRPr share the CT_TextCharacterProperties content
+            // model. Seed a scratch run's rPr from the existing endParaRPr (clone
+            // attributes + children — not OuterXml, whose xmlns prefixes wouldn't
+            // re-parse), mutate it through the full run-property path, then mirror
+            // the result back onto the endParaRPr.
+            var scratchRPr = new Drawing.RunProperties();
+            if (endRPr != null) CopyCharacterProps(endRPr, scratchRPr);
+            var scratchRun = new Drawing.Run { RunProperties = scratchRPr };
+            var runStyleProps = properties.Where(kv => RunStyleParagraphKeys.Contains(kv.Key))
+                .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+            unsupported.AddRange(SetRunOrShapeProperties(runStyleProps, new List<Drawing.Run> { scratchRun },
+                shape, slidePart, runContext: true, unsupportedContextHint: ParagraphPropsHint));
+            var newEnd = new Drawing.EndParagraphRunProperties();
+            CopyCharacterProps(scratchRun.RunProperties ?? scratchRPr, newEnd);
+            if (endRPr != null) para.ReplaceChild(newEnd, endRPr);
+            else para.AppendChild(newEnd);
+            // Drop consumed keys so the default branch below doesn't re-process
+            // them against the (still empty) run list.
+            properties = properties.Where(kv => !RunStyleParagraphKeys.Contains(kv.Key))
+                .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+        }
 
         // Order keys so `text` is processed BEFORE run-style props (size /
         // color / font.* / bold / italic / ...). The text branch in
