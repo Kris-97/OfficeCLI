@@ -1511,10 +1511,22 @@ public partial class PowerPointHandler : IDocumentHandler
                     throw new ArgumentException(
                         "add-part tags: parent must be /slideLayout[N], /slideMaster[N], or /slide[N]");
 
-                // Idempotent: if a relationship with this id already exists, don't
-                // re-add (AddNewPart with a duplicate id throws).
-                if (tagHost.Parts.Any(p => p.RelationshipId == tagRid))
-                    return (tagRid, parentPartPath);
+                // The blank scaffold's master ships rId1..rId5 as slideLayout
+                // relationships, so a master/layout <p:tags r:id="rId5"> collides
+                // with a scaffold layout. Re-home the colliding part onto a fresh
+                // id (repointing the master's sldLayoutIdLst) so the pinned tag id
+                // is free — otherwise the tag part would silently not be created
+                // and the raw-set'd r:id dangled. Mirrors the add-part image /
+                // extpart collision path. (A genuine same-rId re-run is a no-op
+                // since AddNewPart would then create a duplicate — but per batch
+                // each tag rId is emitted once.)
+                if (tagHost is OpenXmlPartContainer tagColl)
+                {
+                    var occ = tagColl.Parts.FirstOrDefault(p => p.RelationshipId == tagRid);
+                    if (occ.OpenXmlPart is UserDefinedTagsPart)
+                        return (tagRid, parentPartPath); // already the tag part — idempotent
+                    ReHomeCollidingRel(tagColl, tagRid);
+                }
                 var newTagPart = tagHost switch
                 {
                     SlidePart sp        => sp.AddNewPart<UserDefinedTagsPart>(tagRid),
