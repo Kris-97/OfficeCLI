@@ -126,7 +126,6 @@ static partial class CommandBuilder
         var createLocaleOpt = new Option<string>("--locale") { Description = "Locale tag (e.g. zh-CN, ja, ko, ar, he) — sets per-script default fonts in docDefaults and enables RTL layout for Arabic / Hebrew / Persian / Urdu and similar locales. Without this flag, the OS user culture (CFLocale on macOS, $LANG on Linux, user UI culture on Windows) is used as the default. Pass --locale en-US to force a deterministic LTR/Latin baseline regardless of the host machine. Currently only honored for .docx." };
         var createMinimalOpt = new Option<bool>("--minimal") { Description = "(.docx only) Skip Word's Normal.dotm-style baseline (Calibri 11pt + Normal style + theme1.xml) and emit a raw OOXML-spec docx instead. Use for testing edge cases or producing maximally compact output. Without this flag, the doc carries Word-aligned defaults so it renders identically in Word, other producers, and the cli preview." };
         var createCommand = new Command("create", "Create a blank Office document");
-        createCommand.Aliases.Add("new");
         createCommand.Add(createFileArg);
         createCommand.Add(createTypeOpt);
         createCommand.Add(createForceOpt);

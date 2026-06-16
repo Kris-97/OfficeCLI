@@ -52,7 +52,7 @@ static partial class CommandBuilder
                     { Code = "unsupported_format" };
 
             // CONSISTENCY(file-not-found): mirror the get/set/query format —
-            // "File not found: <path>. Use 'officecli new <path>' to create a
+            // "File not found: <path>. Use 'officecli create <path>' to create a
             // blank document, or check the file extension.". Without this
             // early guard the dump path falls through to the SDK opener whose
             // raw '.NET Could not find file' message disagrees with every
@@ -60,7 +60,7 @@ static partial class CommandBuilder
             if (!File.Exists(file.FullName))
                 throw new CliException(
                     $"File not found: {file.FullName}. " +
-                    $"Use 'officecli new {file.FullName}' to create a blank document, " +
+                    $"Use 'officecli create {file.FullName}' to create a blank document, " +
                     $"or check the file extension.")
                     { Code = "file_not_found" };
 
