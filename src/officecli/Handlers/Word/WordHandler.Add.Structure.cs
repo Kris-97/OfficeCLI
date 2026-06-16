@@ -633,10 +633,17 @@ public partial class WordHandler
             ? new RunProperties(new RunStyle { Val = fnRefStyle })
             : new RunProperties(new VerticalTextAlignment { Val = VerticalPositionValues.Superscript });
         var footnote = new Footnote { Id = fnId };
+        // The authored text run carries `text` VERBATIM — no synthetic leading
+        // space. Real Word footnotes place no space between the reference mark
+        // and the first content run (the mark's own glyph spacing handles the
+        // gap), so a dump→batch round-trip of a source note must reproduce its
+        // first <w:t> byte-for-byte. A previously prepended " " inflated every
+        // rebuilt footnote's first run by one U+0020; GetFootnoteText trimmed it
+        // back on readback (hiding it from get/view) while the on-disk XML drifted.
         var fnContentPara = new Paragraph(
             new ParagraphProperties(new ParagraphStyleId { Val = "FootnoteText" }),
             new Run(fnRefMarkRPr, new FootnoteReferenceMark()),
-            new Run(new Text(" " + fnText) { Space = SpaceProcessingModeValues.Preserve })
+            new Run(new Text(fnText) { Space = SpaceProcessingModeValues.Preserve })
         );
         footnote.AppendChild(fnContentPara);
         // i18n: route remaining keys (direction, font.cs, bold.cs, etc.)
@@ -712,10 +719,11 @@ public partial class WordHandler
             ? new RunProperties(new RunStyle { Val = enRefStyle })
             : new RunProperties(new VerticalTextAlignment { Val = VerticalPositionValues.Superscript });
         var endnote = new Endnote { Id = enId };
+        // Verbatim text run — no synthetic leading space (mirrors AddFootnote).
         var enContentPara = new Paragraph(
             new ParagraphProperties(new ParagraphStyleId { Val = "EndnoteText" }),
             new Run(enRefMarkRPr, new EndnoteReferenceMark()),
-            new Run(new Text(" " + enText) { Space = SpaceProcessingModeValues.Preserve })
+            new Run(new Text(enText) { Space = SpaceProcessingModeValues.Preserve })
         );
         endnote.AppendChild(enContentPara);
         // i18n: route remaining keys through the same helper as footnote.

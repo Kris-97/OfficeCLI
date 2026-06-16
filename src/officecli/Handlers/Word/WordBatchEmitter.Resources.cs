@@ -1807,16 +1807,13 @@ public static partial class WordBatchEmitter
         if (firstParaRuns.Count > 0)
         {
             var firstRun = firstParaRuns[0];
-            // TrimStart the FIRST content run's text only: AddFootnote/AddEndnote
-            // prepend a single space between the superscript reference mark and
-            // the authored text, and GetFootnoteText trims it back on readback —
-            // so the source first run carries that leading space. Re-feeding it
-            // verbatim to AddFootnote would prepend ANOTHER space every round
-            // (dump fixed-point never converges; R7B exact-text assertions fail).
-            // Trimming here mirrors GetFootnoteText exactly: a genuinely
-            // authored leading space (no preceding refmark space, e.g. the
-            // hand-authored "Plain " case) has none to trim, so it is preserved.
-            noteProps["text"] = (firstRun.Text ?? string.Empty).TrimStart();
+            // Emit the FIRST content run's text VERBATIM. AddFootnote/AddEndnote
+            // no longer prepend a synthetic leading space and GetFootnoteText no
+            // longer trims one, so the apply side stores exactly what we emit —
+            // the source first <w:t> round-trips byte-faithfully (an Arabic note
+            // starting "خاص…" stays "خاص…", not " خاص…"). A genuinely authored
+            // leading space is preserved for the same reason.
+            noteProps["text"] = firstRun.Text ?? string.Empty;
             MergeRunFormatProps(noteProps, firstRun);
         }
         else

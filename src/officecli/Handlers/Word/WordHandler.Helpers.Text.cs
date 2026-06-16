@@ -21,11 +21,15 @@ public partial class WordHandler
     /// </summary>
     private static string GetFootnoteText(OpenXmlElement fnOrEn)
     {
+        // No TrimStart: AddFootnote/AddEndnote no longer prepend a synthetic
+        // leading space, so the stored first run is the authored text verbatim
+        // and readback must reflect it byte-faithfully (a genuinely authored
+        // leading space now survives get/view and the dump round-trip).
         return string.Join("", fnOrEn.Descendants<Run>()
             .Where(r => r.GetFirstChild<FootnoteReferenceMark>() == null
                      && r.GetFirstChild<EndnoteReferenceMark>() == null)
             .SelectMany(r => r.Elements<Text>())
-            .Select(t => t.Text)).TrimStart();
+            .Select(t => t.Text));
     }
 
     private static string GetParagraphText(Paragraph para)
