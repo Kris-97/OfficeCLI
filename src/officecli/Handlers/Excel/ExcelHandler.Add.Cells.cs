@@ -194,8 +194,9 @@ public partial class ExcelHandler
         // down. Gate only on "inserting at a position" (index set), NOT on the
         // presence of cell data at/below — sheet-level structures (CF / merge /
         // dataValidation) anchored on still-empty cells must shift too. Mirrors
-        // AddCol, which always calls ShiftColumnsRight on a positional insert.
-        // When nothing sits at/below rowIdx this is a harmless no-op.
+        // AddCol, which calls ShiftColumnsRight on every positional insert
+        // (CONSISTENCY(add-row-col-shift)). When nothing sits at/below rowIdx this
+        // is a harmless no-op.
         bool needsShift = index.HasValue;
         if (needsShift)
             ShiftRowsDown(worksheet, rowIdx);
@@ -877,15 +878,18 @@ public partial class ExcelHandler
 
         var insertColIdx = ColumnNameToIndex(insertColName);
 
-        // Shift existing data and metadata right, except when this is an
-        // idempotent re-add of an already-existing single-column <col> entry —
-        // in that case the user just wants to mutate width/hidden in place,
-        // and shifting would push the matching <col> away from insertColIdx,
-        // making the subsequent existingCol lookup miss and append a duplicate.
-        var preExistingExactCol = GetSheet(colWorksheet).GetFirstChild<Columns>()
-            ?.Elements<Column>()
-            .FirstOrDefault(c => c.Min?.Value == (uint)insertColIdx && c.Max?.Value == (uint)insertColIdx);
-        if (preExistingExactCol == null)
+        // A positional insert ALWAYS shifts existing data + metadata right,
+        // exactly like AddRow's ShiftRowsDown gate (needsShift = index.HasValue).
+        // The earlier guard skipped the shift whenever a single-column <col>
+        // already sat at insertColIdx — but that is true for ANY column merely
+        // carrying a stored width, so a formatted worksheet's `add col` silently
+        // dropped the shift and corrupted data. Insert is a purely structural
+        // shift, never gated on stored column width (standard spreadsheet
+        // semantics); mutating width/hidden in place is the job of
+        // `set /Sheet/col[X]`.
+        // CONSISTENCY(add-row-col-shift): mirror AddRow's positional-insert gate.
+        bool colNeedsShift = index.HasValue || !string.IsNullOrEmpty(colLetterProp);
+        if (colNeedsShift)
         {
             ShiftColumnsRight(colWorksheet, insertColIdx);
             DeleteCalcChainIfPresent();
