@@ -235,6 +235,36 @@ public partial class PowerPointHandler
             properties[canonical] = v;
         }
 
+        // RC1: an EMPTY placeholder (no runs — common on layout/master title and
+        // body placeholders that only carry prompt text via inheritance) used to
+        // silently drop run-format props (size/color/bold/…): every per-key
+        // `foreach (var run in runs)` loop ran zero iterations, yet Set still
+        // reported "Updated". Fix: when there are no runs but run-format props are
+        // present, run the existing per-case logic against a detached SCRATCH run,
+        // then transplant the resulting RunProperties children onto the first
+        // paragraph's <a:defRPr> (the OOXML home for default run formatting on a
+        // runless placeholder). This reuses every existing case unchanged.
+        Drawing.Run? defRPrScratchRun = null;
+        Drawing.Paragraph? defRPrTargetPara = null;
+        if (runs.Count == 0 && properties.Keys.Any(k => RunFormatDefRPrKeys.Contains(k.ToLowerInvariant())))
+        {
+            var txBody = shape.TextBody;
+            if (txBody == null)
+            {
+                txBody = new DocumentFormat.OpenXml.Presentation.TextBody(
+                    new Drawing.BodyProperties(), new Drawing.ListStyle());
+                shape.TextBody = txBody;
+            }
+            defRPrTargetPara = txBody.GetFirstChild<Drawing.Paragraph>();
+            if (defRPrTargetPara == null)
+            {
+                defRPrTargetPara = new Drawing.Paragraph();
+                txBody.AppendChild(defRPrTargetPara);
+            }
+            defRPrScratchRun = new Drawing.Run(new Drawing.RunProperties(), new Drawing.Text(string.Empty));
+            runs = new List<Drawing.Run> { defRPrScratchRun };
+        }
+
         // CONSISTENCY(prop-order): fill carriers (fill/gradient/pattern) must run
         // before modifier props (opacity attaches alpha to the resulting solidFill);
         // otherwise opacity auto-creates a white fill that fill= then overwrites.
@@ -2300,8 +2330,58 @@ public partial class PowerPointHandler
             }
         }
 
+        // RC1: transplant the scratch run's resolved RunProperties onto the
+        // target paragraph's <a:pPr><a:defRPr>. defRPr shares CT_TextCharacter-
+        // Properties with rPr, so the children (solidFill, latin, etc.) copy
+        // 1:1; only the element name differs. Schema order is enforced by
+        // ReorderDrawingRunProperties on the source rPr before the copy.
+        if (defRPrScratchRun != null && defRPrTargetPara != null)
+        {
+            var scratchProps = defRPrScratchRun.RunProperties;
+            if (scratchProps != null && (scratchProps.HasChildren || scratchProps.HasAttributes))
+            {
+                var pPr = defRPrTargetPara.GetFirstChild<Drawing.ParagraphProperties>();
+                if (pPr == null)
+                {
+                    pPr = new Drawing.ParagraphProperties();
+                    defRPrTargetPara.InsertAt(pPr, 0);
+                }
+                pPr.RemoveAllChildren<Drawing.DefaultRunProperties>();
+                var defRPr = new Drawing.DefaultRunProperties();
+                // Copy attributes (sz, b, i, …) and child elements (solidFill,
+                // latin font, …) from the scratch rPr onto the defRPr.
+                foreach (var attr in scratchProps.GetAttributes())
+                    defRPr.SetAttribute(attr);
+                foreach (var child in scratchProps.ChildElements)
+                    defRPr.AppendChild((OpenXmlElement)child.CloneNode(true));
+                // defRPr must be the LAST child of a:pPr per CT_TextParagraphProperties.
+                pPr.AppendChild(defRPr);
+            }
+        }
+
         return unsupported;
     }
+
+    // RC1: run-format keys that, on a runless placeholder, are written to the
+    // paragraph's <a:defRPr> instead of being silently dropped. Shape-level
+    // props (fill, geometry, x/y, …) are intentionally excluded — they target
+    // the shape regardless of run count and must not trigger defRPr injection.
+    private static readonly HashSet<string> RunFormatDefRPrKeys = new(StringComparer.Ordinal)
+    {
+        "size", "fontsize", "font.size",
+        "color", "font.color",
+        "bold", "font.bold", "italic", "font.italic",
+        "underline", "font.underline", "u",
+        "strike", "font.strike",
+        "font", "font.name", "font.latin", "font.ea", "font.eastasia", "font.eastasian",
+        "font.cs", "font.complexscript", "font.complex",
+        "highlight", "spc", "kern", "lang", "altlang", "baseline",
+        "sz", "b", "i",
+        // NOTE: "cap" intentionally EXCLUDED — it already has its own textless-
+        // shape fallback (writes to the first paragraph's endParaRPr, see the
+        // `case "cap"` below). Routing it through defRPr would break that
+        // established behavior (AuditPptxAddSet*Cap* tests).
+    };
 
     /// <summary>Ensure the cell has at least one Drawing.Run, creating one if needed.</summary>
     private static void EnsureTableCellHasRun(Drawing.TableCell cell)
