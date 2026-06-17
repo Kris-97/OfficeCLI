@@ -1166,6 +1166,50 @@ public partial class WordHandler
             "revision.date",
             "revision.id",
         };
+        // BUG-DUMP-MARKRPR-VERBATIM (class fix): if the dump emitted the WHOLE
+        // ¶-mark <w:rPr> verbatim (markRPr.xml), apply it as the authoritative
+        // mark rPr ONCE here and skip every per-property markRPr.* dotted key in
+        // the loop below (they're redundant with the verbatim subtree and would
+        // double-apply). This closes the hardcoded-allowlist class: every mark
+        // rPr child — including ones no dotted key covers (w:em, w:effect, w:w,
+        // w14:* OpenType extensions) — round-trips. markRPrVerbatimApplied also
+        // signals the RTL cascade (ApplyDirectionCascade) NOT to re-stamp the
+        // mark's <w:rtl/>, since the verbatim subtree already carries the source's
+        // exact mark-rtl state (fixes the COP-13/Dari mark-rtl over-stamp).
+        bool markRPrVerbatimApplied = false;
+        if ((properties.TryGetValue("markRPr.xml", out var markRPrXml)
+                || properties.TryGetValue("markrpr.xml", out markRPrXml))
+            && !string.IsNullOrEmpty(markRPrXml) && markRPrXml.StartsWith("<"))
+        {
+            try
+            {
+                var pmRprVerbatim = new ParagraphMarkRunProperties(markRPrXml);
+                pProps.RemoveAllChildren<ParagraphMarkRunProperties>();
+                // CT_PPr schema order: ParagraphMarkRunProperties precedes
+                // sectPr / pPrChange. Insert before the first of those, else
+                // append (mirrors EnsureParagraphMarkRunPropertiesInSchemaOrder).
+                OpenXmlElement? pmSuccessor = null;
+                foreach (var child in pProps.ChildElements)
+                {
+                    if (child is SectionProperties || child is ParagraphPropertiesChange)
+                    {
+                        pmSuccessor = child;
+                        break;
+                    }
+                }
+                if (pmSuccessor != null)
+                    pmSuccessor.InsertBeforeSelf(pmRprVerbatim);
+                else
+                    pProps.AppendChild(pmRprVerbatim);
+                // Note: the rebuilt <w:rPr> carries a redundant xmlns:w decl (the
+                // standalone fragment needed it to parse; the SDK keeps it on the
+                // in-tree element). It is valid OOXML and idempotent (the next
+                // dump re-emits the same OuterXml), just a cosmetically-verbose
+                // but equivalent serialization of the same <w:rPr>.
+                markRPrVerbatimApplied = true;
+            }
+            catch { /* malformed fragment — fall back to dotted keys below */ }
+        }
         foreach (var (key, value) in properties)
         {
             // ACCOUNTING(handler-as-truth): see AddStyle for rationale.
@@ -1179,6 +1223,9 @@ public partial class WordHandler
             if (key.StartsWith("markRPr.", StringComparison.OrdinalIgnoreCase)
                 || key.StartsWith("markrpr.", StringComparison.OrdinalIgnoreCase))
             {
+                // Verbatim subtree already applied — ignore the redundant dotted
+                // keys (and the markRPr.xml key itself) to avoid double-apply.
+                if (markRPrVerbatimApplied) continue;
                 var sub = key.Substring("markRPr.".Length);
                 var pmRpr = pProps.GetFirstChild<ParagraphMarkRunProperties>()
                     ?? pProps.AppendChild(new ParagraphMarkRunProperties());

@@ -4389,6 +4389,25 @@ public partial class WordHandler
                 else
                     node.Format["markRPr.rStyle"] = rs.Val.Value;
             }
+            // BUG-DUMP-MARKRPR-VERBATIM (class fix): the dotted markRPr.* keys
+            // above are a hardcoded ALLOWLIST — any ¶-mark rPr child not on it
+            // (w:em CJK emphasis, w:effect, w:w letter-scaling, the w14:*
+            // OpenType-extension elements, …) was silently dropped on round-trip.
+            // Emit the WHOLE ¶-mark <w:rPr> verbatim as a single key so EVERY
+            // property survives; AddParagraph applies it as the authoritative
+            // mark rPr and skips the per-property dotted apply (the dotted keys
+            // stay emitted for human/other-consumer readability but are inert on
+            // replay when markRPr.xml is present). Mirrors AddFootnote's verbatim
+            // referenceMarkRPr. The revision paraMarkIns/Del markers live in a
+            // SEPARATE namespace (not <w:rPr> children) and are unaffected.
+            // OuterXml keeps the xmlns:w (and any w14:/mc:) declarations the
+            // standalone fragment needs to re-parse on replay (new
+            // ParagraphMarkRunProperties(xml) drops children whose prefix can't
+            // resolve, so the declaration must stay). The redundant xmlns:w is
+            // cosmetic bloat but harmless and idempotent (the next dump re-emits
+            // the same OuterXml). Do NOT strip it — stripping breaks the apply.
+            if (pmrpForDump.HasChildren)
+                node.Format["markRPr.xml"] = pmrpForDump.OuterXml;
         }
 
         // First-run formatting on the paragraph node (like PPTX does for shapes).
