@@ -58,7 +58,7 @@ public partial class PowerPointHandler
                 chart = chartPart.ChartSpace?.GetFirstChild<DocumentFormat.OpenXml.Drawing.Charts.Chart>();
                 plotArea = chart?.GetFirstChild<DocumentFormat.OpenXml.Drawing.Charts.PlotArea>();
                 if (plotArea == null) return;
-                info = ChartSvgRenderer.ExtractChartInfo(plotArea, chart);
+                info = ChartSvgRenderer.ExtractChartInfo(plotArea, chart, themeColors);
             }
             else return;
         }

@@ -101,7 +101,7 @@ internal partial class ChartSvgRenderer
         bool showDataLabels = false, string? valNumFmt = null, string? plotFillColor = null,
         List<(string Name, double Value, string Color, double WidthPt, string Dash)>? referenceLines = null,
         bool isWaterfall = false, List<ErrorBarInfo?>? errorBars = null,
-        bool labelAsPercent = false)
+        bool labelAsPercent = false, string? dataLabelNumFmt = null)
     {
         var allValues = series.SelectMany(s => s.values).ToArray();
         if (allValues.Length == 0) return;
@@ -113,8 +113,12 @@ internal partial class ChartSvgRenderer
         // 100%-stacked), label each point with its percentage of the category
         // stack total — `pctVal` is the already-scaled 0..100 value the plot
         // geometry uses. Otherwise label the raw value. Mirrors the pie path.
+        // Prefer an explicit data-label format (<c:dLbls><c:numFmt>); it applies
+        // even to integer values (so #,##0 yields "1,000" not raw "1000"). Fall
+        // back to the bare-integer shortcut then the axis numFmt otherwise.
         string LabelText(double rawVal, double pctVal)
             => labelAsPercent ? $"{pctVal:0}%"
+               : !string.IsNullOrEmpty(dataLabelNumFmt) ? FormatAxisValue(rawVal, dataLabelNumFmt)
                : (rawVal % 1 == 0 ? $"{(int)rawVal}" : FormatAxisValue(rawVal, valNumFmt));
 
         double maxVal;
@@ -1909,6 +1913,9 @@ internal partial class ChartSvgRenderer
         public int CatFontPx { get; set; } = 9;
         public string? CatFontColor { get; set; }
         public string? ValNumFmt { get; set; }
+        /// <summary>Format code from &lt;c:dLbls&gt;&lt;c:numFmt&gt; — applied to data
+        /// labels (overrides the value-axis ValNumFmt for label text).</summary>
+        public string? DataLabelsNumFmt { get; set; }
         public string? TitleFontColor { get; set; }
         public string? GridlineColor { get; set; }
         /// <summary>True when the value axis has &lt;c:majorGridlines&gt; (horizontal gridlines).</summary>
@@ -2012,7 +2019,8 @@ internal partial class ChartSvgRenderer
     }
 
     /// <summary>Extract all chart metadata from OOXML PlotArea and Chart elements.</summary>
-    public static ChartInfo ExtractChartInfo(OpenXmlElement plotArea, OpenXmlElement? chart)
+    public static ChartInfo ExtractChartInfo(OpenXmlElement plotArea, OpenXmlElement? chart,
+        Dictionary<string, string>? themeColors = null)
     {
         var info = new ChartInfo();
         info.PlotArea = plotArea as PlotArea;
@@ -2062,7 +2070,7 @@ internal partial class ChartSvgRenderer
         // Colors
         var isPieType = info.ChartType.Contains("pie") || info.ChartType.Contains("doughnut");
         var serElements = chartTypeEl?.Elements().Where(e => e.LocalName == "ser").ToList() ?? [];
-        info.Colors = ExtractColors(serElements, info.Series, isPieType, info.ChartType);
+        info.Colors = ExtractColors(serElements, info.Series, isPieType, info.ChartType, themeColors);
 
         // Title
         var titleEl = chart?.Elements().FirstOrDefault(e => e.LocalName == "title");
@@ -2095,6 +2103,11 @@ internal partial class ChartSvgRenderer
             var dLblPosEl = dLbls.Elements().FirstOrDefault(e => e.LocalName == "dLblPos");
             var dLblPosVal = dLblPosEl?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value;
             if (!string.IsNullOrEmpty(dLblPosVal)) info.DataLabelPos = dLblPosVal!;
+            // <c:numFmt formatCode="#,##0"> inside dLbls formats the label text
+            // (e.g. grouping separators). Independent of the value-axis numFmt.
+            var dLblNumFmtEl = dLbls.Elements().FirstOrDefault(e => e.LocalName == "numFmt");
+            var dLblFmtCode = dLblNumFmtEl?.GetAttributes().FirstOrDefault(a => a.LocalName == "formatCode").Value;
+            if (!string.IsNullOrEmpty(dLblFmtCode)) info.DataLabelsNumFmt = dLblFmtCode;
         }
 
         // Doughnut hole size
@@ -2501,7 +2514,7 @@ internal partial class ChartSvgRenderer
 
     /// <summary>Extract series colors (per-point for pie/doughnut, stroke for line/scatter, fill for others).</summary>
     private static List<string> ExtractColors(List<OpenXmlElement> serElements, List<(string name, double[] values)> series,
-        bool isPieType, string chartType)
+        bool isPieType, string chartType, Dictionary<string, string>? themeColors = null)
     {
         var colors = new List<string>();
 
@@ -2519,7 +2532,7 @@ internal partial class ChartSvgRenderer
                     if (idxEl == null) return false;
                     return idxEl.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value == i.ToString();
                 });
-                var rgb = ExtractFillColor(dPt?.Elements().FirstOrDefault(e => e.LocalName == "spPr"));
+                var rgb = ExtractFillColor(dPt?.Elements().FirstOrDefault(e => e.LocalName == "spPr"), themeColors);
                 colors.Add(rgb != null ? $"#{rgb}" : FallbackColors[i % FallbackColors.Length]);
             }
         }
@@ -2537,10 +2550,10 @@ internal partial class ChartSvgRenderer
                     {
                         // For line/scatter, prefer stroke color from a:ln > a:solidFill
                         var ln = spPr?.Elements().FirstOrDefault(e => e.LocalName == "ln");
-                        rgb = ExtractFillColor(ln);
+                        rgb = ExtractFillColor(ln, themeColors);
                     }
                     // Fallback to solidFill
-                    rgb ??= ExtractFillColor(spPr);
+                    rgb ??= ExtractFillColor(spPr, themeColors);
                 }
                 colors.Add(rgb != null ? $"#{rgb}" : FallbackColors[i % FallbackColors.Length]);
             }
@@ -2593,13 +2606,41 @@ internal partial class ChartSvgRenderer
         return null;
     }
 
-    /// <summary>Extract hex color (without #) from solidFill > srgbClr inside an spPr or ln element.</summary>
-    private static string? ExtractFillColor(OpenXmlElement? container)
+    /// <summary>Extract hex color (without #) from solidFill > srgbClr (or schemeClr
+    /// resolved against the theme map) inside an spPr or ln element.</summary>
+    private static string? ExtractFillColor(OpenXmlElement? container, Dictionary<string, string>? themeColors = null)
     {
         if (container == null) return null;
         var solidFill = container.Elements().FirstOrDefault(e => e.LocalName == "solidFill");
         var srgb = solidFill?.Elements().FirstOrDefault(e => e.LocalName == "srgbClr");
         var v = srgb?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value;
+        // schemeClr (e.g. accent3): resolve through the theme color map so a
+        // series styled with a scheme color renders its actual theme hex instead
+        // of dropping to the wrong fallback-palette index. Mirrors the shape
+        // renderer's ResolveFillColor (schemeClr → themeColors[name] → hex).
+        if (v == null && themeColors != null)
+        {
+            var scheme = solidFill?.Elements().FirstOrDefault(e => e.LocalName == "schemeClr");
+            var schemeName = scheme?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value;
+            if (!string.IsNullOrEmpty(schemeName))
+            {
+                var canonical = ParseHelpers.NormalizeSchemeColorName(schemeName) ?? schemeName;
+                if (themeColors.TryGetValue(canonical, out var themeHex)
+                    || themeColors.TryGetValue(schemeName, out themeHex))
+                    v = themeHex;
+            }
+        }
+        // gradFill fallback: a gradient-filled series has no solidFill. SVG bar
+        // fills are flat, so approximate the gradient with its FIRST stop color
+        // (the gradient start) rather than dropping to the wrong fallback accent.
+        if (v == null)
+        {
+            var gradFill = container.Elements().FirstOrDefault(e => e.LocalName == "gradFill");
+            var gsLst = gradFill?.Elements().FirstOrDefault(e => e.LocalName == "gsLst");
+            var firstGs = gsLst?.Elements().FirstOrDefault(e => e.LocalName == "gs");
+            var gsSrgb = firstGs?.Elements().FirstOrDefault(e => e.LocalName == "srgbClr");
+            v = gsSrgb?.GetAttributes().FirstOrDefault(a => a.LocalName == "val").Value;
+        }
         // Reject non-hex values — the return flows into $"#{...}" inline SVG
         // fill/style attributes. Same XSS class as w:color / w:shd / border.
         if (v == null) return null;
@@ -2775,7 +2816,8 @@ internal partial class ChartSvgRenderer
                     info.GapWidth, ValFontPx, CatFontPx, info.ShowDataLabels, info.ValNumFmt,
                     isHorizontal ? info.PlotFillColor : null, info.ReferenceLines,
                     info.IsWaterfall, info.ErrorBars,
-                    info.IsPercent && info.ShowDataLabelPercent && !info.ShowDataLabelVal);
+                    info.IsPercent && info.ShowDataLabelPercent && !info.ShowDataLabelVal,
+                    info.DataLabelsNumFmt);
         }
 
         // Axis titles inside SVG — for horizontal bar charts, value axis is on bottom and category axis is on left
