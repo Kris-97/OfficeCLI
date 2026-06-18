@@ -62,7 +62,9 @@ Title must be **≥ 2× body size** (36pt over 20pt works; 28pt over 20pt looks 
 
 **Two fonts max, one palette.** One heading font + one body font (e.g. Georgia + Calibri) — a third *display* face is fine only for big numerals or the cover title, as long as that heading+body pair stays intact. One dominant brand color (60–70% weight) + one supporting + one accent. Never mix 4+ colors in body content. **The palettes and font pairings in Design Principles are a floor, not a menu:** if the user gave brand colors/fonts or an existing template, match those first; otherwise the named sets are calibrated seeds — blend or diverge freely, as long as the result isn't *worse* than them and still clears the contrast floor.
 
-**Every slide carries a non-text visual.** Shape, chart, icon, gradient band. A bullet-only deck is interchangeable with a Word doc. Exceptions: literal quote slides, code blocks, a single summary-table slide.
+**Every slide carries a non-text visual — one that informs.** Shape, chart, icon, gradient band that carries meaning, not decoration. A bullet-only deck is interchangeable with a Word doc. Exceptions: literal quote slides, code blocks, a single summary-table slide.
+
+**Less is more — every element earns its place.** The visual rule above guards against bullet-walls; it is not licence to clutter. Don't pad with decorative stats, icons, or filler sections that don't inform ("data slop"). If a slide feels empty, fix it with layout and whitespace, not invented content — cut scope rather than bulk it up, and flag a larger addition instead of making it unprompted.
 
 **Speaker notes on every content slide.** `--type notes --prop text="..."`. The speaker needs a script; the audience shouldn't read the slide verbatim.
 
@@ -76,9 +78,8 @@ Before declaring done, the per-slide render (see QA) MUST satisfy:
 
 - **No placeholder tokens rendered as content.** `{{name}}`, `$fy$24`, `<TODO>`, `lorem`, `xxxx`, empty `()`/`[]` in chart titles never appear.
 - **No overflow off-edge, no clipped text in shapes.** `view issues` flags both (`shape_off_slide` + a text-fit hint). To fix a clip: grow the box or shorten the value — never trim content to fit.
-- **Cover slide is content-rich.** Title + subtitle + presenter/client block + date + a brand band or key-takeaway strap. A cover with 80% whitespace reads as a stub.
+- **Cover carries its orienting elements.** Title + subtitle + presenter/client + date + a brand band or key-takeaway strap — a title-only cover reads as a stub. Generous whitespace around them is still right; rich ≠ crowded.
 - **Contrast.** `view issues` auto-flags the common case — opaque dark text on a shape's own dark fill (`low_contrast`). It can't see the rest: icon / chart-series fills, scheme/inherited colors, or text over a *separate* background shape. So on any fill with brightness < 30% (`1E2761`, `36454F`, deep forest / berry / cherry), still confirm every body run, card body, chart series, and icon is `FFFFFF` or brightness > 80% — mid-gray (`6B7B8D` ≈ 44%) reads on a laptop and vanishes on projection. Spot-check via `view html` after the dark-fill pass.
-- **No `\$` literals in slide text.** A literal `\$` in `view text` means the value wasn't single-quoted — fix per Shell discipline above. (`\n` / `\t` ARE real breaks; literal `\\n` means double-escaping.)
 
 If any fails, STOP and fix before declaring done.
 
@@ -189,11 +190,13 @@ Vary layout across slides — repeating the same pattern makes every slide feel 
 
 Pick ONE distinctive element (rounded image frames, section numbers in filled circles, single-side border band, diagonal accent strips) and carry it to every slide — commit across the whole deck; styling one slide and leaving the rest plain reads as abandoned. A secondary motif is fine only if it doesn't compete with the primary. Declare it in your build plan first: `## Motif: numbered circles in brand color`.
 
-### The one visual AI-tell with no positive home
+### Visual AI-tells to avoid
 
-(Other "don'ts" — vary layout, left-align body, pick palette by topic, every slide a visual, commit the motif deck-wide — are already stated as positive rules above.)
+- **No decorative underline under slide titles.** A stripe / rule below a heading is the single most common AI-slide tell — use whitespace or a background-color change instead.
+- **No rounded-corner card with a colored left-border accent stripe.** The other classic AI-slide tell — use a solid fill, a top accent band, or whitespace separation instead.
+- **No emoji as iconography** unless the brand uses them — use a shape or a real icon asset.
 
-- **No decorative underline under slide titles.** A stripe / rule below a heading is the single most common AI-slide tell — use whitespace or a background-color change instead. (Copy-level tells: see "Copy reads human".)
+Copy-level tells live in "Copy reads human".
 
 ## Common Workflow
 
@@ -246,7 +249,7 @@ officecli view "$FILE" outline          # slide count + titles
 officecli view "$FILE" annotated        # complete per-slide breakdown with fonts, sizes, tables, charts
 officecli view "$FILE" text --start 1 --end 5   # text dump (does NOT extract table cells — use get)
 officecli view "$FILE" issues           # empty slides, overflow hints
-officecli view "$FILE" stats            # counts + totals (alt count unreliable — see Alt text verification)
+officecli view "$FILE" stats            # counts + totals (incl. pictures missing alt)
 ```
 
 **Inspect one element.** XPath-style paths, 1-based. ALWAYS quote. Prefer `@name=` / `@id=` selectors over positional `[N]` (stable across reorderings). `[last()]` works. Add `--json` for machine output.
@@ -275,9 +278,8 @@ officecli view "$FILE" html                # prints an HTML preview path; Read i
 officecli view "$FILE" svg --start 3 --end 3   # single slide SVG (charts + gradients do NOT render in SVG)
 ```
 
-**Reading the output — two expected non-defects:**
-- **`layout=blank` has no title placeholder.** Titles are plain `shape` elements, so `view outline` / `view issues` reporting `(untitled)` / `Slide has no title` is **expected**, not a defect. Use `layout=title` + `placeholder[title]` only when screen-reader outline compatibility matters.
-- **Alt text verification.** `view stats "Pictures without alt text: 0"` is a false-positive zero (alt auto-fills to filename) — verify via `view annotated`.
+**Reading the output — an expected non-defect:**
+- **`layout=blank` has no title placeholder.** Titles are plain `shape` elements, so `view outline` reporting `(untitled)` is **expected**, not a defect. Use `layout=title` + `placeholder[title]` only when screen-reader outline compatibility matters.
 
 ## Creating & Editing
 
@@ -307,19 +309,12 @@ Positioning is explicit — no layout engine, you own the grid math. `--prop pre
 
 ### Text inside shapes (paragraphs, runs, styling)
 
-A shape has paragraphs (`paragraph[K]`) and runs. For one-line text, `--prop text=` on the shape is enough. Multi-line or mixed styling:
+A shape has paragraphs (`paragraph[K]`) and runs (`run[K]`). For one-line text, `--prop text=` on the shape is enough; a `\n` in the text makes a paragraph break, `\t` a tab (see Shell & Execution Discipline; double `\\n` for a literal). `add --type paragraph` takes the same style props as a shape (text, align, bold, italic, size, color, font). For mixed styling *within* a line, append a styled run:
 
 ```bash
-# add --type paragraph accepts only text + align; styling goes through a follow-up set or an add --type run:
-officecli add "$FILE" "/slide[2]/shape[@name=Card1]" --type paragraph --prop text="First bullet"
-officecli set "$FILE" "/slide[2]/shape[@name=Card1]/paragraph[1]" --prop bold=true --prop size=20 --prop color=FFFFFF
-
-# Styled run in one step:
 officecli add "$FILE" "/slide[2]/shape[@name=Card1]/paragraph[1]" --type run \
   --prop text=" (inline detail)" --prop size=14 --prop italic=true --prop color=8899BB
 ```
-
-For real newlines inside one run, use a batch heredoc with JSON `"\n"`. Shell-quoted `\n` in `--prop text=` is NOT interpreted.
 
 ### Charts
 
@@ -333,7 +328,7 @@ officecli add "$FILE" /slide[3] --type chart --prop chartType=column \
   --prop x=2cm --prop y=4cm --prop width=20cm --prop height=10cm
 ```
 
-Gotchas: (1) series cannot be added after creation — include all series at `add` time or `remove` + re-add. (2) chart titles with `()`, `[]`, `TBD` ship as literal text. (3) some viewers normalize chart colors to theme defaults — verify in the target viewer.
+Gotchas: (1) chart titles with `()`, `[]`, `TBD` ship as literal text. (2) some viewers normalize chart colors to theme defaults — verify in the target viewer. Series can be added after creation (`add --type series`).
 
 ### Pictures
 
@@ -460,7 +455,7 @@ for pair in "Step1 Step2" "Step2 Step3" "Step3 Step4"; do
 done
 ```
 
-`shape=elbow` is canonical (`bentConnector3` also works; `bentConnector2` is rejected). `query --json` results are in `.data.results[]` — use `.data.results[0].format.id`, not `.[0].id`.
+`shape=elbow` is canonical (`bentConnector3` also works; `bentConnector2` is rejected).
 
 #### (d) Multi-slide deck skeletons
 
@@ -526,8 +521,8 @@ FILE="deck.pptx"
 # Gate 1 — schema
 officecli validate "$FILE" && echo "Gate 1 OK" || { echo "REJECT Gate 1"; exit 1; }
 
-# Gate 2 — overflow / format / structure (drop expected layout=blank "no title" noise)
-ISSUES=$(officecli view "$FILE" issues 2>&1 | grep -vE "Slide has no title")
+# Gate 2 — overflow / format / structure
+ISSUES=$(officecli view "$FILE" issues 2>&1)
 echo "$ISSUES" | grep -qE "^\s*\[[A-Z][0-9]+\]" && { echo "REJECT Gate 2:"; echo "$ISSUES"; exit 1; } || echo "Gate 2 OK"
 
 # Gate 2b — leftover placeholders ("xxxx", "lorem", "<TODO>", empty (), [], "this slide layout")
@@ -585,4 +580,4 @@ Sanity-check cheatsheet — what breaks on the first try. Design + shell traps.
 | `/shape[myname]` (bare name in brackets) | Use `@name=` selector: `/shape[@name=myname]` or `/shape[@id=10007]` |
 | Paths 1-based vs `--index` 0-based | `/slide[1]` = first slide; `--index 0` = first position |
 | `$` in `--prop text=` | Single-quote: `--prop text='$15M'`. Double-quoted `"$15M"` gets shell-expanded to `M` |
-| `\n` / `\t` in `--prop text=` | CLI does NOT interpret. Use multiple `--type paragraph`, or batch heredoc with JSON `"\n"` |
+| `\n` / `\t` in `--prop text=` | Interpreted by the CLI: `\n` = paragraph break, `\t` = tab. Double `\\n` for a literal |
