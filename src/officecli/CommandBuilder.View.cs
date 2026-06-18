@@ -209,15 +209,16 @@ static partial class CommandBuilder
                     var (pStart, pEnd) = ParsePptHtmlPage(effectiveFilter, start, end, pptHandler);
                     html = pptHandler.ViewAsHtml(pStart, pEnd, gridCols, screenshotWidth);
 
-                    // A single slide renders at its native size (design pt × 4/3 px), not
-                    // the viewport — so the generic 4:3 viewport (1600×1200) letterboxes it
-                    // with canvas padding on every side. When capturing one slide (not a
-                    // multi-slide range or grid) and the caller kept both default dims, set
-                    // the viewport to the slide's native pixels so the PNG is the slide,
-                    // padding-free. ViewAsHtml zeroes the headless page padding to match.
-                    // Multi-slide ranges stack vertically and keep the tall viewport.
-                    if (pStart == pEnd && gridCols == 0 && screenshotWidth == 1600 && screenshotHeight == 1200)
-                        (screenshotWidth, screenshotHeight) = pptHandler.GetSlideNativePixels();
+                    // The generic 4:3 viewport (1600×1200) letterboxes a single slide with
+                    // canvas padding. When capturing one slide (not a multi-slide range or
+                    // grid) and the caller kept the default height, derive the height from
+                    // the slide aspect so the PNG matches the slide and is padding-free
+                    // (ViewAsHtml scales the slide up to fill + zeroes the headless page
+                    // padding). Keying off the ratio, not the slide's physical size, keeps
+                    // same-proportion decks at the same resolution. Multi-slide ranges stack
+                    // vertically and keep the tall viewport.
+                    if (pStart == pEnd && gridCols == 0 && screenshotHeight == 1200)
+                        screenshotHeight = Math.Max(1, (int)Math.Round(screenshotWidth * pptHandler.SlideAspectRatio()));
                 }
                 else if (handler is OfficeCli.Handlers.ExcelHandler excelHandler)
                     html = excelHandler.ViewAsHtml();

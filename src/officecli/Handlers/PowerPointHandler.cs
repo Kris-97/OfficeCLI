@@ -119,17 +119,17 @@ public partial class PowerPointHandler : IDocumentHandler
     }
 
     /// <summary>
-    /// Slide size in CSS pixels (the size a single slide actually renders at in
-    /// the HTML preview: design pt × 4/3 at 96dpi). The screenshot path sizes a
-    /// single-slide viewport to this so the PNG is the slide, with no
-    /// canvas-vs-slide letterbox padding. EMU → px = EMU ÷ 9525 (12700 EMU/pt ×
-    /// 3/4 px/pt). Falls back to 1280×720 (16:9).
+    /// Slide aspect ratio (height ÷ width). The screenshot path multiplies a
+    /// target viewport width by this to get a height that matches the slide, so a
+    /// single-slide capture is flush with no letterbox padding — and, because it
+    /// keys off the ratio rather than the physical EMU size, two decks of the same
+    /// proportion (e.g. a 13.33" and a 10" 16:9) screenshot at the same resolution.
+    /// Falls back to 16:9.
     /// </summary>
-    internal (int width, int height) GetSlideNativePixels()
+    internal double SlideAspectRatio()
     {
         var (w, h) = GetSlideSize();
-        if (w <= 0 || h <= 0) return (1280, 720);
-        return ((int)Math.Round(w / 9525.0), (int)Math.Round(h / 9525.0));
+        return w > 0 && h > 0 ? (double)h / w : 9.0 / 16.0;
     }
 
     // ==================== Raw Layer ====================
