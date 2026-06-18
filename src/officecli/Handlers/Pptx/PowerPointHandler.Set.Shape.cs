@@ -316,8 +316,11 @@ public partial class PowerPointHandler
                 case "tabs" or "tablist":
                 {
                     var pProps = para.ParagraphProperties ?? (para.ParagraphProperties = new Drawing.ParagraphProperties());
-                    pProps.RemoveAllChildren<Drawing.TabStopList>();
+                    // Validate-before-mutate: ParseTabStopList throws on invalid
+                    // alignment tokens. Parse FIRST so a failed Set leaves the
+                    // existing <a:tabLst> intact (no data loss).
                     var tabList = ParseTabStopList(value);
+                    pProps.RemoveAllChildren<Drawing.TabStopList>();
                     if (tabList != null)
                         InsertPPrChild(pProps, tabList);
                     break;
