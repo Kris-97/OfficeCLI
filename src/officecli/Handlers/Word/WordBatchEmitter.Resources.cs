@@ -1593,7 +1593,13 @@ public static partial class WordBatchEmitter
             }
             else
             {
-                props["text"] = c.Text ?? string.Empty;
+                // BUG-DUMP-NOTE-EMPTYLEAD (comment parity): when the comment's
+                // first paragraph is empty but later paragraphs hold the content,
+                // seed p[1] EMPTY — the structural pass below (the pi>=1 loop)
+                // re-emits those later paragraphs. The whole-comment c.Text
+                // fallback is only for a SINGLE degenerate paragraph; with later
+                // paragraphs it duplicated the body. Mirrors the note seed guard.
+                props["text"] = bodyParas.Count > 1 ? string.Empty : (c.Text ?? string.Empty);
             }
             // Map anchoredTo (source paraId path) -> target paragraph index.
             // anchoredTo looks like "/body/p[@paraId=00100000]"; parse and
@@ -2152,8 +2158,22 @@ public static partial class WordBatchEmitter
             // refmark paragraph stays text-less and the table round-trips
             // through the blockOrder EmitTable pass.
             bool leadsWithTable = directChildren.Count > 0 && directChildren[0] == "tbl";
+            // BUG-DUMP-NOTE-EMPTYLEAD: a note whose FIRST paragraph is empty but
+            // which has SUBSEQUENT block children (a leading blank line before
+            // the ref-mark/content paragraph — e.g. a footnote authored as
+            // <w:p/><w:p><w:footnoteRef/> text</w:p>) must seed p[1] EMPTY. The
+            // content lives in the later paragraph(s) that the structural body-run
+            // pass re-emits below. The whole-note Get(sourceNotePath).Text fallback
+            // is meant ONLY for a SINGLE degenerate paragraph whose visible text
+            // sits in non-round-trippable runs; when later blocks exist it
+            // vacuumed the content paragraph's text into the seed AND the
+            // structural pass emitted that paragraph again, DUPLICATING the note
+            // body — the doubled note rendered taller, pulled body content down,
+            // and shifted every subsequent page break. Mirrors the leadsWithTable
+            // guard (R27-5), which already excludes table content from the seed.
+            bool hasLaterBlocks = directChildren.Count > 1;
             string fallback = "";
-            if (!leadsWithTable)
+            if (!leadsWithTable && !hasLaterBlocks)
             {
                 try { fallback = word.Get(sourceNotePath).Text ?? ""; }
                 catch { /* leave empty */ }
