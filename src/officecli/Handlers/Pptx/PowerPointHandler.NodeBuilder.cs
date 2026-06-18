@@ -1091,6 +1091,21 @@ public partial class PowerPointHandler
         if (blipFill != null)
         {
             node.Format["image"] = "true";
+            // R9-7: surface the embedded image's file name on a companion key so
+            // the readback is round-trippable, mirroring R4-7 background.src.
+            // Keep Format["image"] == "true" for the long-standing bare contract.
+            var blipEmbedId = blipFill.GetFirstChild<Drawing.Blip>()?.Embed?.Value;
+            if (!string.IsNullOrEmpty(blipEmbedId) && part != null)
+            {
+                try
+                {
+                    var imgPart = part.GetPartById(blipEmbedId!);
+                    var fileName = System.IO.Path.GetFileName(imgPart.Uri.ToString());
+                    if (!string.IsNullOrEmpty(fileName))
+                        node.Format["image.src"] = fileName;
+                }
+                catch { /* dangling rel — no src surfaced */ }
+            }
             // Round-trip the blip fill's framing: the <a:srcRect> crop insets and
             // the <a:stretch><a:fillRect> stretch insets. ApplyShapeImageFill
             // formerly always wrote a child-less <a:fillRect/>, so an image
