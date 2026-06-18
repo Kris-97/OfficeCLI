@@ -52,6 +52,11 @@ public partial class PowerPointHandler
         public string? SpaceBefore;
         public string? SpaceAfter;
 
+        // R7-6: theme font scheme, stashed so ApplyRprLike can decode a
+        // "+mj-lt"/"+mn-lt" theme-reference typeface to its concrete face and
+        // report the right /theme/{major,minor}Font source slot.
+        public Drawing.FontScheme? FontScheme;
+
         public readonly Dictionary<string, string> Sources = new();
     }
 
@@ -80,6 +85,7 @@ public partial class PowerPointHandler
         // Layer 1 (lowest): theme — major font for titles, minor for body.
         var theme = slidePart.SlideLayoutPart?.SlideMasterPart?.ThemePart?.Theme;
         var fontScheme = theme?.ThemeElements?.FontScheme;
+        r.FontScheme = fontScheme;
         if (fontScheme != null)
         {
             OpenXmlCompositeElement? themeFont = isTitle ? fontScheme.MajorFont : (OpenXmlCompositeElement?)fontScheme.MinorFont;
@@ -155,6 +161,16 @@ public partial class PowerPointHandler
         }
         if (directRpr != null)
             ApplyRunRpr(r, directRpr);
+
+        // R7-7: OOXML spec-default size fallback for placeholders whose cascade
+        // carried no explicit sz= anywhere (common on a blank-deck title). Mirrors
+        // ResolvePlaceholderFontSize's hard-coded defaults (Title=44pt, SubTitle=32pt,
+        // Body=24pt per ECMA-376) so effective.size is emitted instead of silently skipped.
+        if (!r.Size.HasValue && ph != null)
+        {
+            r.Size = isTitle ? 4400 : isSubTitle ? 3200 : 2400;
+            r.Sources["size"] = "/spec-default";
+        }
 
         return r;
     }
@@ -347,24 +363,17 @@ public partial class PowerPointHandler
             }
         }
 
-        var latin = rprLike.GetFirstChild<Drawing.LatinFont>()?.Typeface?.Value;
-        if (!string.IsNullOrEmpty(latin) && !latin.StartsWith("+", StringComparison.Ordinal))
-        {
-            r.FontLatin = latin;
-            r.Sources["font.latin"] = layer;
-        }
-        var ea = rprLike.GetFirstChild<Drawing.EastAsianFont>()?.Typeface?.Value;
-        if (!string.IsNullOrEmpty(ea) && !ea.StartsWith("+", StringComparison.Ordinal))
-        {
-            r.FontEa = ea;
-            r.Sources["font.ea"] = layer;
-        }
-        var cs = rprLike.GetFirstChild<Drawing.ComplexScriptFont>()?.Typeface?.Value;
-        if (!string.IsNullOrEmpty(cs) && !cs.StartsWith("+", StringComparison.Ordinal))
-        {
-            r.FontCs = cs;
-            r.Sources["font.cs"] = layer;
-        }
+        // R7-6: a "+"-prefixed typeface is a theme reference ("+mj-lt" → major
+        // latin, "+mn-ea" → minor east-asian, etc.). Decode it to the concrete
+        // face from the theme font scheme and report the /theme/{major,minor}Font
+        // source slot, instead of skipping it (which left effective.font.src
+        // reporting the inherited minor font even when the run referenced major).
+        ApplyThemeRefOrLiteral(r, rprLike.GetFirstChild<Drawing.LatinFont>()?.Typeface?.Value,
+            "font.latin", layer, v => r.FontLatin = v);
+        ApplyThemeRefOrLiteral(r, rprLike.GetFirstChild<Drawing.EastAsianFont>()?.Typeface?.Value,
+            "font.ea", layer, v => r.FontEa = v);
+        ApplyThemeRefOrLiteral(r, rprLike.GetFirstChild<Drawing.ComplexScriptFont>()?.Typeface?.Value,
+            "font.cs", layer, v => r.FontCs = v);
 
         var fill = rprLike.GetFirstChild<Drawing.SolidFill>();
         var color = ReadColorFromFill(fill);
@@ -374,6 +383,45 @@ public partial class PowerPointHandler
             r.Sources["color"] = layer;
         }
     }
+
+    /// <summary>
+    /// R7-6: apply a font typeface slot, decoding a "+mj-*"/"+mn-*" theme reference
+    /// into the concrete face from the stashed font scheme. A literal typeface sets
+    /// the slot with <paramref name="layer"/> as its source; a theme reference sets
+    /// it with /theme/majorFont or /theme/minorFont as its source. A "+" reference
+    /// with no font scheme available is skipped (cannot resolve).
+    /// </summary>
+    private static void ApplyThemeRefOrLiteral(
+        ResolvedEffective r, string? typeface, string sourceKey, string layer,
+        Action<string?> setSlot)
+    {
+        if (string.IsNullOrEmpty(typeface)) return;
+        if (!typeface.StartsWith("+", StringComparison.Ordinal))
+        {
+            setSlot(typeface);
+            r.Sources[sourceKey] = layer;
+            return;
+        }
+        // Theme reference: "+mj-lt"/"+mn-lt"/"+mj-ea"/… — "mj"/"mn" selects
+        // major vs minor; the slot (-lt/-ea/-cs) is keyed off sourceKey.
+        if (r.FontScheme == null) return;
+        bool isMajor = typeface.StartsWith("+mj", StringComparison.Ordinal);
+        var fontEl = isMajor ? (OpenXmlCompositeElement?)r.FontScheme.MajorFont : r.FontScheme.MinorFont;
+        var resolved = PickFromFont(fontEl, sourceKey);
+        if (!string.IsNullOrEmpty(resolved) && !resolved!.StartsWith("+", StringComparison.Ordinal))
+        {
+            setSlot(resolved);
+            r.Sources[sourceKey] = isMajor ? "/theme/majorFont" : "/theme/minorFont";
+        }
+    }
+
+    /// <summary>Pick the typeface for a font slot key (font.latin/ea/cs) from a theme font element.</summary>
+    private static string? PickFromFont(OpenXmlCompositeElement? fontEl, string sourceKey) => fontEl == null ? null : sourceKey switch
+    {
+        "font.ea" => fontEl.GetFirstChild<Drawing.EastAsianFont>()?.Typeface?.Value,
+        "font.cs" => fontEl.GetFirstChild<Drawing.ComplexScriptFont>()?.Typeface?.Value,
+        _ => fontEl.GetFirstChild<Drawing.LatinFont>()?.Typeface?.Value,
+    };
 
     // ==================== Emit (mirror docx) ====================
 
