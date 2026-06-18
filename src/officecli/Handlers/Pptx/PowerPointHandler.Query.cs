@@ -488,8 +488,16 @@ public partial class PowerPointHandler
             // Get too (same canonical `list` key as NodeBuilder.ParaToNode emit).
             if (qParaPProps != null)
             {
-                var qParaList = ReadListStyleFromPProps(qParaPProps);
-                if (qParaList != null) paraNode.Format["list"] = qParaList;
+                // Mirror NodeBuilder's bulletRaw-first / list-fallback so
+                // paragraph-level Get exposes the same canonical bullet key set
+                // as shape-level Get (mutually exclusive).
+                var qParaBulletRaw = ReadBulletRawFromPProps(qParaPProps);
+                if (qParaBulletRaw != null) paraNode.Format["bulletRaw"] = qParaBulletRaw;
+                else
+                {
+                    var qParaList = ReadListStyleFromPProps(qParaPProps);
+                    if (qParaList != null) paraNode.Format["list"] = qParaList;
+                }
                 // R65 bt-2: mirror NodeBuilder.ParaToNode so direct paragraph
                 // Get (Query.cs path) surfaces custom tab stops too.
                 var qParaTabs = ReadTabsFromPProps(qParaPProps);
