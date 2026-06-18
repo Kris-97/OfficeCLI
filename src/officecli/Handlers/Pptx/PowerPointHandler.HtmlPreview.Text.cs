@@ -37,9 +37,15 @@ public partial class PowerPointHandler
         // textBody is a p:txBody (Presentation.TextBody), and its a:bodyPr is a
         // Drawing.BodyProperties child — read it generically, not via a cast to
         // Drawing.TextBody (which a p:txBody is not).
-        var nafScale = textBody.GetFirstChild<Drawing.BodyProperties>()?
-            .GetFirstChild<Drawing.NormalAutoFit>()?.FontScale?.Value;
+        var naf = textBody.GetFirstChild<Drawing.BodyProperties>()?
+            .GetFirstChild<Drawing.NormalAutoFit>();
+        var nafScale = naf?.FontScale?.Value;
         double fontScale = (nafScale.HasValue && nafScale.Value > 0) ? nafScale.Value / 100000.0 : 1.0;
+        // R10-1: honor <a:normAutofit lnSpcReduction="N"> (1/1000% → ratio). When a
+        // PowerPoint deck shrank line spacing to fit, it stores the reduction here;
+        // multiply paragraph line-heights by (1 - reduction). Absent/0 = no change.
+        var lnRed = naf?.LineSpaceReduction?.Value;
+        double lnSpcFactor = (lnRed.HasValue && lnRed.Value > 0) ? (1 - lnRed.Value / 100000.0) : 1.0;
         bool isFirstPara = true;
         foreach (var para in textBody.Elements<Drawing.Paragraph>())
         {
@@ -103,15 +109,22 @@ public partial class PowerPointHandler
                     paraStyles.Add($"margin-bottom:{saPct.Value / 100000.0 * (spcFontHundredths / 100.0):0.##}pt");
             }
 
-            // Line spacing
+            // Line spacing. R10-1: scale percent/default line-heights by the
+            // normAutofit lnSpcReduction factor (fixed-pt line-heights are absolute
+            // and unaffected, matching PowerPoint).
             var lsPct = pProps?.GetFirstChild<Drawing.LineSpacing>()?.GetFirstChild<Drawing.SpacingPercent>()?.Val?.Value;
-            if (lsPct.HasValue) paraStyles.Add($"line-height:{lsPct.Value / 100000.0:0.##}");
+            if (lsPct.HasValue) paraStyles.Add($"line-height:{lsPct.Value / 100000.0 * lnSpcFactor:0.##}");
             var lsPts = pProps?.GetFirstChild<Drawing.LineSpacing>()?.GetFirstChild<Drawing.SpacingPoints>()?.Val?.Value;
             if (lsPts.HasValue) paraStyles.Add($"line-height:{lsPts.Value / 100.0:0.##}pt");
             // R7-3: no explicit lnSpc on the paragraph — inherit the master/layout
             // bodyStyle lvl lnSpc resolved via the placeholder cascade.
             else if (!lsPct.HasValue && inheritedLineSpacing != null)
                 paraStyles.Add(inheritedLineSpacing);
+            // R10-1: paragraph has no explicit/inherited line spacing but the body
+            // has a lnSpcReduction — emit the reduced default multiplier so the
+            // reduction is visible in the render.
+            else if (!lsPct.HasValue && inheritedLineSpacing == null && lnSpcFactor < 1.0)
+                paraStyles.Add($"line-height:{lnSpcFactor:0.##}");
 
             // Indent / left margin. OOXML hanging-indent idiom (bullet outside, text inside)
             // is marL>=0 paired with indent<0 (|indent|==marL). We translate marL to CSS

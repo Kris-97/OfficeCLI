@@ -752,6 +752,7 @@ public partial class PowerPointHandler
         "sun" => (0.20, 0.20, 0.20, 0.20),
         "moon" => (0.15, 0, 0, 0),
         "cube" => (0, 0.08, 0.08, 0),
+        "ellipse" => (0.15, 0.15, 0.15, 0.15),
         "donut" => (0.25, 0.25, 0.25, 0.25),
         "roundRect" => (0.07, 0.07, 0.07, 0.07),
         "wedgeRectCallout" or "wedgeRoundRectCallout" or "wedgeEllipseCallout" => (0.08, 0.08, 0.08, 0.08),
