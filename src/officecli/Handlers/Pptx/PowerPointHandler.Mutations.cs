@@ -328,6 +328,34 @@ public partial class PowerPointHandler
         // paragraph/run sub-paths on shapes and placeholders; Remove must too.
         // Mirrors the resolution helpers used by Set.Shape (ResolveShape /
         // ResolvePlaceholderShape) — no fingerprinting, pure positional path.
+        // R7-4: remove the shape/placeholder hyperlink — equivalent to set link=none.
+        // Strips the hlinkClick from nvSpPr/cNvPr and every run (mirrors ApplyShapeHyperlink("none")).
+        var shapeHlinkRemoveMatch = Regex.Match(path,
+            @"^/slide\[(\d+)\]/shape\[(\d+)\]/hyperlink$");
+        if (shapeHlinkRemoveMatch.Success)
+        {
+            var hSlideIdx = int.Parse(shapeHlinkRemoveMatch.Groups[1].Value);
+            var hShapeIdx = int.Parse(shapeHlinkRemoveMatch.Groups[2].Value);
+            var (hSlidePart, hShape) = ResolveShape(hSlideIdx, hShapeIdx);
+            ApplyShapeHyperlink(hSlidePart, hShape, "none");
+            return null;
+        }
+
+        var phHlinkRemoveMatch = Regex.Match(path,
+            @"^/slide\[(\d+)\]/placeholder\[(\w+)\]/hyperlink$");
+        if (phHlinkRemoveMatch.Success)
+        {
+            var hSlideIdx = int.Parse(phHlinkRemoveMatch.Groups[1].Value);
+            var hPhId = phHlinkRemoveMatch.Groups[2].Value;
+            var hSlideParts = GetSlideParts().ToList();
+            if (hSlideIdx < 1 || hSlideIdx > hSlideParts.Count)
+                throw new ArgumentException($"Slide {hSlideIdx} not found (total: {hSlideParts.Count})");
+            var hSlidePart = hSlideParts[hSlideIdx - 1];
+            var hShape = ResolvePlaceholderShape(hSlidePart, hPhId);
+            ApplyShapeHyperlink(hSlidePart, hShape, "none");
+            return null;
+        }
+
         var runRemoveMatch = Regex.Match(path,
             @"^/slide\[(\d+)\]/shape\[(\d+)\]/(?:paragraph|p)\[(\d+)\]/(?:run|r)\[(\d+)\]$");
         if (runRemoveMatch.Success)
