@@ -1460,6 +1460,34 @@ public partial class WordHandler
             styleRPr.Color = styleColor;
             hasRPr = true;
         }
+        // BUG-DUMP-STYLE-W14LIG: OpenType typographic toggles (ligatures /
+        // numForm / numSpacing) on a STYLE's rPr were dropped on round-trip —
+        // AddStyle's typed setters don't cover the w14 extension elements and the
+        // generic per-key fallback (ApplyRunFormatting / GenericXmlQuery) can't
+        // write a w14-namespaced element. A body style that disables ligatures
+        // (`<w14:ligatures w14:val="none"/>` on Normal) then inherited
+        // docDefaults' `standardContextual`, so the whole document re-rendered
+        // with ligatures ON — different glyph shaping/line-wrapping that drifted
+        // the layout across pages. Mirror the run-level ApplyW14ValEffect: "none"
+        // is a real ST_ enum value (explicit disable), never a strip sentinel.
+        foreach (var (w14Key, w14Aliases) in new[]
+        {
+            ("ligatures", new[] { "ligatures" }),
+            ("numForm", new[] { "numForm", "numform" }),
+            ("numSpacing", new[] { "numSpacing", "numspacing" }),
+        })
+        {
+            string? w14Val = null;
+            foreach (var alias in w14Aliases)
+                if (properties.TryGetValue(alias, out w14Val)) break;
+            if (string.IsNullOrEmpty(w14Val)) continue;
+            var w14Child = WordHandler.BuildW14ValElement(w14Key, w14Val);
+            if (w14Child != null)
+            {
+                InsertRunPropInSchemaOrder(styleRPr, w14Child);
+                hasRPr = true;
+            }
+        }
         if (hasRPr) newStyle.AppendChild(styleRPr);
 
         // Numbering linkage on the style itself (numPr inside StyleParagraphProperties).
@@ -1557,6 +1585,11 @@ public partial class WordHandler
             "font.ascii", "font.hAnsi", "font.eastAsia", "font.cs",
             "numId", "numid", "ilvl", "numLevel", "numlevel",
             "tabs", "tabstops",
+            // BUG-DUMP-STYLE-W14LIG: w14 OpenType toggles consumed by the
+            // explicit StyleRunProperties block above; without listing them the
+            // per-key fallback would route them to GenericXmlQuery (which can't
+            // write a w14-namespaced element) and surface a misleading UNSUPPORTED.
+            "ligatures", "numForm", "numform", "numSpacing", "numspacing",
         };
         foreach (var (key, value) in properties)
         {
