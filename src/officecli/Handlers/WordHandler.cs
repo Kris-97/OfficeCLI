@@ -1177,6 +1177,24 @@ public partial class WordHandler : IDocumentHandler
             return;
         }
 
+        // Fast-path: a raw-set rooted at a single body table by its global
+        // document-order ordinal — (//w:tbl)[N] or (//w:tbl)[N]/<tail>. The dump
+        // emits one such op per verbatim cell-content fallback (rich field result,
+        // nested SDT, VML textbox) plus tblGrid / cellMerge round-trips — e.g. 2580
+        // of them for a 757-table report. The generic path re-serializes the whole
+        // multi-MB document part per op (rootElement.OuterXml + XDocument.Parse +
+        // InnerXml=) — O(part) each, turning a table-heavy batch into O(ops × part)
+        // (minutes). Resolve the Nth table on the live SDK DOM and run the XPath
+        // engine against that table's subtree only (O(table), a few KB). Same
+        // opt-not-behavior contract as the /styles and sectPr fast-paths above: any
+        // deviation (xpath shape, ordinal out of range, 0 matches, unparseable
+        // fragment) returns false and falls through to the proven generic path.
+        if (lowerPath is "/document" or "/"
+            && TryRawSetWithinTableFast(mainPart, xpath, action, xml))
+        {
+            return;
+        }
+
         if (lowerPath is "/document" or "/")
             rootElement = mainPart.Document ?? throw new InvalidOperationException("No document");
         else if (lowerPath is "/styles")
@@ -1430,6 +1448,98 @@ public partial class WordHandler : IDocumentHandler
             (_deferredRawSetRoots ??= new HashSet<OpenXmlPartRootElement>()).Add(styles);
         else
             styles.Save();
+        return true;
+    }
+
+    // Compiled matcher for a raw-set xpath rooted at a single table by global
+    // document-order ordinal: (//w:tbl)[N] optionally followed by a child path.
+    // See the cell-append fast-path in RawSet.
+    private static readonly System.Text.RegularExpressions.Regex _tableCellAppendXpath =
+        new(@"^\(//w:tbl\)\[(\d+)\]/w:tr\[(\d+)\]/w:tc\[(\d+)\]$",
+            System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    // Namespace prefixes declared on the synthetic <w:body> wrapper used to parse
+    // a verbatim cell-content fragment, so a fragment that relies on an inherited
+    // prefix (one not among its own inline xmlns) still parses. Mirrors the prefix
+    // set the generic raw-set path has in scope; Word-specific and intentionally
+    // narrow. A fragment whose prefix is missing here simply fails to parse and
+    // falls through to the generic path — never silently wrong.
+    private static readonly (string prefix, string uri)[] _wordFragmentNs =
+    {
+        ("w",   "http://schemas.openxmlformats.org/wordprocessingml/2006/main"),
+        ("r",   "http://schemas.openxmlformats.org/officeDocument/2006/relationships"),
+        ("a",   "http://schemas.openxmlformats.org/drawingml/2006/main"),
+        ("wp",  "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"),
+        ("mc",  "http://schemas.openxmlformats.org/markup-compatibility/2006"),
+        ("pic", "http://schemas.openxmlformats.org/drawingml/2006/picture"),
+        ("w14", "http://schemas.microsoft.com/office/word/2010/wordml"),
+        ("wps", "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"),
+        ("wpg", "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup"),
+        ("a14", "http://schemas.microsoft.com/office/drawing/2010/main"),
+        ("v",   "urn:schemas-microsoft-com:vml"),
+        ("o",   "urn:schemas-microsoft-com:office:office"),
+    };
+
+    // Append a verbatim cell-content fragment — the dump's
+    // raw-set (//w:tbl)[N]/w:tr[M]/w:tc[K] append for a rich field result / nested
+    // SDT / VML textbox — directly onto the live cell, bypassing the generic
+    // whole-document serialize/parse round-trip. The generic path re-serializes the
+    // whole multi-MB document part per op (rootElement.OuterXml + XDocument.Parse +
+    // InnerXml=), making a table-heavy batch O(ops × part) — minutes for a
+    // 757-table report. Here the existing table content is never re-serialized
+    // (which is what would otherwise stamp redundant xmlns onto every rebuilt
+    // tbl/tr/tc/p); only the fragment is parsed and grafted, so the saved bytes
+    // match the generic path (both keep the fragment's own inline xmlns).
+    // Returns false — caller falls through to the proven generic path — for any
+    // xpath that is not the exact cell-append shape, an out-of-range index, or a
+    // fragment the SDK cannot parse. Gated to DeferSave (batch): the generic path
+    // runs the per-op global id sweeps (paraId/docPr/sdt/bookmark) eagerly outside
+    // a batch, and verbatim cell content carries those ids; under DeferSave they
+    // run once in FinalizeDeferredIds over the deferred roots, which this mirrors.
+    private bool TryRawSetWithinTableFast(MainDocumentPart mainPart, string xpath, string action, string? xml)
+    {
+        if (!DeferSave) return false;
+        if (xml == null) return false;
+        if (!string.Equals(action, "append", StringComparison.OrdinalIgnoreCase)) return false;
+        var m = _tableCellAppendXpath.Match(xpath);
+        if (!m.Success) return false;
+        var document = mainPart.Document;
+        if (document == null) return false;
+        if (!int.TryParse(m.Groups[1].Value, out var n) || n < 1) return false;
+        if (!int.TryParse(m.Groups[2].Value, out var r) || r < 1) return false;
+        if (!int.TryParse(m.Groups[3].Value, out var c) || c < 1) return false;
+        // (//w:tbl)[N] — Nth <w:tbl> in document order (the SDK's Descendants<T>()
+        // walk is pre-order DFS, the same order XPath's // axis yields); then the
+        // Mth direct <w:tr> child and that row's Kth direct <w:tc> child, matching
+        // the literal /w:tr[M]/w:tc[K] child-axis steps. Any out-of-range index
+        // falls through to the generic path.
+        var table = document.Descendants<Table>().ElementAtOrDefault(n - 1);
+        if (table == null) return false;
+        var row = table.Elements<TableRow>().ElementAtOrDefault(r - 1);
+        if (row == null) return false;
+        var cell = row.Elements<TableCell>().ElementAtOrDefault(c - 1);
+        if (cell == null) return false;
+        // Parse the fragment inside a synthetic <w:body> that declares the common
+        // Word prefixes (so a fragment relying on an inherited prefix still parses)
+        // then graft its children onto the live cell. The fragment keeps its own
+        // inline xmlns exactly as the generic path's append does, and — crucially —
+        // the surrounding table is left untouched, so no redundant xmlns is stamped
+        // onto existing content.
+        var sb = new System.Text.StringBuilder("<w:body");
+        foreach (var (prefix, uri) in _wordFragmentNs)
+            sb.Append(" xmlns:").Append(prefix).Append("=\"").Append(uri).Append('"');
+        sb.Append('>').Append(xml).Append("</w:body>");
+        Body holder;
+        try { holder = new Body(sb.ToString()); }
+        catch { return false; }
+        var appended = holder.ChildElements.ToList();
+        if (appended.Count == 0) return false;
+        foreach (var child in appended)
+        {
+            child.Remove();
+            cell.AppendChild(child);
+        }
+        (_deferredRawSetRoots ??= new HashSet<OpenXmlPartRootElement>()).Add(document);
         return true;
     }
 
