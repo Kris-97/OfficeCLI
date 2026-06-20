@@ -1563,6 +1563,12 @@ public partial class WordHandler
             // loop would route `hidden` to ApplyRunFormatting (vanish alias)
             // and double-stamp it on rPr.
             "autoRedefine", "autoredefine", "hidden",
+            // customStyle / customstyle consumed in the explicit dispatch above
+            // (sets Style.CustomStyle, BUG-DUMP-R30-1). The dump emits it on
+            // every style entry (Normal included), so without listing it here
+            // the per-key sweep flags every styled docx's round-trip with a
+            // spurious customStyle "(not supported)" warning.
+            "customStyle", "customstyle",
             // BUG-DUMP-STYLE-LATENT: latent-style flags consumed in the explicit
             // dispatch above (uiPriority/semiHidden/unhideWhenUsed/qFormat/
             // locked). Without listing them here the per-key fallback loop would
