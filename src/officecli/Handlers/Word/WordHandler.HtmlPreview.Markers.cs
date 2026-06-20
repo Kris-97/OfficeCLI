@@ -330,6 +330,11 @@ public partial class WordHandler
         if (inst == null) return null;
         var ovr = inst.Elements<LevelOverride>()
             .FirstOrDefault(o => o.LevelIndex?.Value == ilvl);
+        // ECMA-376 §17.9.7: a lvlOverride that embeds a full <w:lvl> replaces
+        // the entire level definition (including its own <w:start>), and the
+        // startOverride is ignored. Defer to the embedded level's start (read
+        // via GetStartValue) by reporting "no override" here.
+        if (ovr?.GetFirstChild<Level>() != null) return null;
         return ovr?.StartOverrideNumberingValue?.Val?.Value;
     }
 

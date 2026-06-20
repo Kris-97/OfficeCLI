@@ -1201,9 +1201,13 @@ public partial class WordHandler
             .FirstOrDefault(n => n.NumberID?.Value == numId);
         if (numInstance == null) return null;
 
-        // Check level override first
+        // Check level override first. ECMA-376 §17.9.7: when the lvlOverride
+        // embeds a full <w:lvl>, that replacement's own <w:start> governs and
+        // the sibling startOverride is ignored — mirror GetLevel's precedence.
         var lvlOverride = numInstance.Elements<LevelOverride>()
             .FirstOrDefault(o => o.LevelIndex?.Value == ilvl);
+        if (lvlOverride?.GetFirstChild<Level>() is Level embeddedLevel)
+            return embeddedLevel.StartNumberingValue?.Val?.Value;
         if (lvlOverride?.StartOverrideNumberingValue?.Val?.Value is int overrideStart)
             return overrideStart;
 
