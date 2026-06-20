@@ -376,6 +376,14 @@ public static partial class WordBatchEmitter
             var tblPrBeforeXml = TryStringFormat(tableNode.Format, "tblPrChange.beforeXml");
             if (tblPrBeforeXml != null)
                 tableSetProps["revision.beforeXml"] = tblPrBeforeXml;
+            // BUG-DUMP-R71-TBLPREX-CASCADE: suppress the apply-side per-row
+            // tblPrEx cascade. That cascade is an interactive Mac-Word
+            // visibility hack; on round-trip the source's real per-row tblPrEx
+            // already replay verbatim via per-row `set tr --prop tblPrEx`, so
+            // letting the cascade also run injects spurious tblPrEx into every
+            // row (tables with a table-level tblPrChange but no per-row
+            // exceptions went 0 → rows×2 tblPrEx and failed validation).
+            tableSetProps["revision.skipRowCascade"] = "true";
         }
         else
         {
