@@ -904,13 +904,19 @@ public partial class WordHandler
     {
         if (st.OlCountPerLevel.TryGetValue(forIlvl, out var prev) && prev > 0)
             return prev;
-        // <w:startOverride> is a restart marker that applies only when the level
-        // is explicitly visited. When a deeper level auto-initializes a skipped
-        // shallower level (autoInit), Word ignores startOverride and uses the
-        // level's intrinsic <w:start> — verified vs real Word.
+        // A per-num-instance level override (a <w:lvlOverride> carrying a
+        // <w:startOverride> OR an embedded <w:lvl> with its own <w:start>) means
+        // "this num restarts its numbering at that value" and takes precedence
+        // over continuation from a sibling num sharing the abstractNum. Without
+        // checking it BEFORE the continuation branch below, an overridden num
+        // sharing an abstractNum continued the sibling's count (e.g. 4,5,6)
+        // instead of starting fresh at the override (5,6,7). This is a restart
+        // marker, so it applies only on explicit visitation — autoInit (a deeper
+        // level implicitly initializing this skipped level) ignores it and uses
+        // the level's intrinsic <w:start>, matching Word.
         if (!autoInit)
         {
-            var ovr = GetNumStartOverride(numId, forIlvl);
+            var ovr = GetNumInstanceOverrideStart(numId, forIlvl);
             if (ovr.HasValue) return SeedBelow(ovr.Value);
         }
         if (absId.HasValue
@@ -942,6 +948,24 @@ public partial class WordHandler
         var lvl = abs?.Elements<Level>()
             .FirstOrDefault(l => l.LevelIndex?.Value == ilvl);
         return lvl?.StartNumberingValue?.Val?.Value ?? 1;
+    }
+
+    // The per-num-instance override start for a level, or null when this num has
+    // no <w:lvlOverride> for it. An embedded <w:lvl> replaces the level (its own
+    // <w:start> governs, ECMA-376 §17.9.7 — startOverride is then ignored);
+    // otherwise the bare <w:startOverride> value. Non-null signals "this num
+    // restarts here", which outranks shared-abstractNum continuation.
+    private int? GetNumInstanceOverrideStart(int numId, int ilvl)
+    {
+        var numbering = _doc.MainDocumentPart?.NumberingDefinitionsPart?.Numbering;
+        var inst = numbering?.Elements<NumberingInstance>()
+            .FirstOrDefault(n => n.NumberID?.Value == numId);
+        var ovr = inst?.Elements<LevelOverride>()
+            .FirstOrDefault(o => o.LevelIndex?.Value == ilvl);
+        if (ovr == null) return null;
+        if (ovr.GetFirstChild<Level>() is Level emb)
+            return emb.StartNumberingValue?.Val?.Value ?? 1;
+        return ovr.StartOverrideNumberingValue?.Val?.Value;
     }
 
     /// <summary>
