@@ -1482,7 +1482,15 @@ public partial class WordHandler
             properties.TryGetValue("revision.date", out pTcDate);
             properties.TryGetValue("revision.id", out pTcId);
             var pprChange = new ParagraphPropertiesChange();
-            if (!string.IsNullOrEmpty(pTcAuthor)) pprChange.Author = pTcAuthor;
+            // BUG-DUMP-PPRCHANGE-AUTHOR: w:author is a REQUIRED attribute on
+            // CT_TrackChange (pPrChange) — omitting it makes the file schema-invalid
+            // and Word repairs-on-open. A source pPrChange authored with an EMPTY
+            // name (w:author="") is common; Navigation's readback skips an empty
+            // author so revision.author never arrives here, and the old
+            // `if (!IsNullOrEmpty)` guard then dropped the attribute entirely.
+            // Always stamp author (empty string when unknown) so the marker stays
+            // schema-valid and the empty-author source round-trips faithfully.
+            pprChange.Author = pTcAuthor ?? "";
             if (!string.IsNullOrEmpty(pTcDate) && DateTime.TryParse(pTcDate, out var pTcDt))
                 pprChange.Date = pTcDt;
             pprChange.Id = !string.IsNullOrEmpty(pTcId)
@@ -2781,8 +2789,12 @@ public partial class WordHandler
             var rPr = newRun.GetFirstChild<RunProperties>()
                    ?? newRun.PrependChild(new RunProperties());
             var rprChange = new RunPropertiesChange();
-            if (!string.IsNullOrEmpty(trackChangeAuthor))
-                rprChange.Author = trackChangeAuthor;
+            // BUG-DUMP-PPRCHANGE-AUTHOR (run side): w:author is REQUIRED on
+            // CT_TrackChange (rPrChange) — same schema rule as pPrChange above.
+            // An empty-author source marker (w:author="") must round-trip as an
+            // empty attribute, not a dropped one (which fails validation and
+            // triggers Word repair-on-open).
+            rprChange.Author = trackChangeAuthor ?? "";
             // BUG-R4F-03: RoundtripKind keeps a …Z date in Utc (see above).
             if (!string.IsNullOrEmpty(trackChangeDate)
                 && DateTime.TryParse(trackChangeDate, null, System.Globalization.DateTimeStyles.RoundtripKind, out var tcfDate))
