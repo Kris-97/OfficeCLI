@@ -921,15 +921,27 @@ public partial class WordHandler
         // marker, so it applies only on explicit visitation — autoInit (a deeper
         // level implicitly initializing this skipped level) ignores it and uses
         // the level's intrinsic <w:start>, matching Word.
-        if (!autoInit)
-        {
-            var ovr = GetNumInstanceOverrideStart(numId, forIlvl);
-            if (ovr.HasValue) return SeedBelow(ovr.Value);
-        }
+        int? continuedRun = null;
         if (absId.HasValue
             && st.AbsNumLevelCounters.TryGetValue(absId.Value, out var byIlvl)
             && byIlvl.TryGetValue(forIlvl, out var running) && running > 0)
-            return running;
+            continuedRun = running;
+        if (!autoInit)
+        {
+            var ovr = GetNumInstanceOverrideStart(numId, forIlvl);
+            // A bare startOverride restarts the level to that value — but only on
+            // the level's INITIAL start or an lvlRestart-triggered restart
+            // (ECMA-376 §17.9.7). A level that is CONTINUED from a sibling num
+            // sharing the abstractNum AND never restarts (lvlRestart="0") meets
+            // neither condition, so it keeps its running count rather than jumping
+            // to the override value (matches Word). A fresh level (not continued)
+            // still takes the override as its initial start.
+            if (ovr.HasValue
+                && !(continuedRun.HasValue && GetEffectiveLvlRestart(numId, forIlvl) == 0))
+                return SeedBelow(ovr.Value);
+        }
+        if (continuedRun.HasValue)
+            return continuedRun.Value;
         var rawStart = autoInit
             ? GetLevelDefinedStart(numId, forIlvl)
             : (GetStartValue(numId, forIlvl) ?? 1);
@@ -1255,10 +1267,17 @@ public partial class WordHandler
             st.CurrentNumId = numId.Value;
             // Re-arm per-instance startOverrides for the new num: each overridden
             // level fires its override the next time it is DIRECTLY advanced,
-            // even if a deeper item carried the level over first.
+            // even if a deeper item carried the level over first. EXCEPTION: a
+            // level with lvlRestart="0" (never restart) that is already running
+            // does NOT fire — startOverride applies only on a level's initial
+            // start or an lvlRestart-triggered restart (ECMA-376 §17.9.7), and a
+            // never-restart continued level meets neither, so it keeps counting
+            // (Word continues such a level across the numId switch instead of
+            // jumping to the override value).
             st.PendingInstanceOverride.Clear();
             for (int lv = 0; lv <= 8; lv++)
-                if (GetNumInstanceOverrideStart(numId.Value, lv).HasValue)
+                if (GetNumInstanceOverrideStart(numId.Value, lv).HasValue
+                    && GetEffectiveLvlRestart(numId.Value, lv) != 0)
                     st.PendingInstanceOverride.Add(lv);
         }
 
