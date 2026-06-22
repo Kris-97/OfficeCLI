@@ -1741,7 +1741,23 @@ public partial class WordHandler
         // contextual shaping + Unicode BiDi algorithm still apply.
         // bidi-override would force reversal, corrupting Arabic glyph order.
         if (rProps.RightToLeftText != null && (rProps.RightToLeftText.Val == null || rProps.RightToLeftText.Val.Value))
+        {
             parts.Add("direction:rtl;unicode-bidi:embed");
+        }
+        else if (para?.ParagraphProperties?.BiDi is { } paraBiDi
+            && (paraBiDi.Val == null || paraBiDi.Val.Value))
+        {
+            // LTR run inside an RTL paragraph (e.g. "100 USD" embedded in
+            // Arabic): the paragraph's direction:rtl base would let the
+            // browser's BiDi algorithm split a "number space letters"
+            // sequence across the line ("100 ... USD"). unicode-bidi:isolate
+            // pins the LTR run as a single self-contained directional island
+            // so it renders left-to-right as one unit, symmetric to the
+            // embed treatment given to RTL runs above. Only emitted in the
+            // RTL-paragraph context — a plain LTR paragraph needs no extra
+            // direction declaration on its runs.
+            parts.Add("direction:ltr;unicode-bidi:isolate");
+        }
 
         // East Asian emphasis mark (w:em val=dot/comma/circle/underDot)
         // → CSS text-emphasis-style, widely supported (including -webkit- prefix)
