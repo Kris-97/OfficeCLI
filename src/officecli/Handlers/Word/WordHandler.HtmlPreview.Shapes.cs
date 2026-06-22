@@ -710,6 +710,37 @@ public partial class WordHandler
         if (!anchor.Elements().Any(e => e.LocalName == "wrapSquare" || e.LocalName == "wrapTight" || e.LocalName == "wrapThrough"))
             return null;
 
+        // Page-anchored shapes with an explicit posOffset (both H and V relative
+        // to the page) live at a FIXED page location, not "beside this paragraph".
+        // Floating them into the anchoring paragraph's inline flow both
+        // mispositions them (they belong at their page coords, often page bottom)
+        // and steals horizontal width from that paragraph — e.g. a 36pt cover
+        // title forced to wrap in the narrow gap left of a page-bottom address
+        // box, which then mid-word-breaks ("produc/t"). Position such shapes
+        // absolutely against the .page (position:relative) so the wrapping text
+        // keeps its full column width. Word's own square-wrap of body text around
+        // a page-bottom box is negligible here (text ends far above it).
+        var vPosPage = anchor.GetFirstChild<DW.VerticalPosition>();
+        var hPosPage = anchor.GetFirstChild<DW.HorizontalPosition>();
+        if (vPosPage?.RelativeFrom?.Value == DW.VerticalRelativePositionValues.Page
+            && hPosPage?.RelativeFrom?.Value == DW.HorizontalRelativePositionValues.Page)
+        {
+            var vOff = vPosPage.Descendants().FirstOrDefault(e => e.LocalName == "posOffset");
+            var hOff = hPosPage.Descendants().FirstOrDefault(e => e.LocalName == "posOffset");
+            if (vOff != null && hOff != null
+                && long.TryParse(vOff.InnerText, out var vEmu)
+                && long.TryParse(hOff.InnerText, out var hEmu))
+            {
+                // posOffset is from the physical page edge (0,0); an absolute
+                // child resolves against .page's padding box, so subtract the
+                // page margin (== .page padding) to convert.
+                var pg = GetPageLayout();
+                var topPt = vEmu / EmuConverter.EmuPerPointF - pg.MarginTopPt;
+                var leftPt = hEmu / EmuConverter.EmuPerPointF - pg.MarginLeftPt;
+                return $"position:absolute;top:{topPt:0.#}pt;left:{leftPt:0.#}pt;z-index:1";
+            }
+        }
+
         var hPos = anchor.GetFirstChild<DW.HorizontalPosition>();
         var hAlign = hPos?.Descendants().FirstOrDefault(e => e.LocalName == "align")?.InnerText;
         var hPosFrom = hPos?.RelativeFrom?.Value;

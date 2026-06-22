@@ -2907,7 +2907,14 @@ public partial class WordHandler
            hide any negative-z-index child (watermark/behind-doc image). */
         .page::before {{ content: ""; position: absolute; inset: 0; background: white;
             border-radius: 4px; z-index: -2; }}
-        .page-body {{ flex: 1; display: flex; flex-direction: column; text-autospace: ideograph-alpha ideograph-numeric; overflow-wrap: anywhere; {hyphensCss} }}
+        /* break-word (not anywhere): a Latin word is only broken when it cannot
+           fit on a line BY ITSELF; an oversized word beside a float first wraps
+           to the next line. anywhere would break mid-word (produc-t) whenever
+           the word does not fit the current inline gap, which is wrong for Latin.
+           Table cells still need anywhere (see th,td rule below) so the R32
+           fixed-grid column min-content collapses and long content wraps inside
+           its column instead of overflowing the page. */
+        .page-body {{ flex: 1; display: flex; flex-direction: column; text-autospace: ideograph-alpha ideograph-numeric; overflow-wrap: break-word; {hyphensCss} }}
         /* Multi-column sections: flex ignores column-count; switch to block. */
         .page-body[style*=""column-count""] {{ display: block; }}
         /* Continuation page-bodies (created by pagination JS when content
@@ -2980,7 +2987,7 @@ public partial class WordHandler
         /* Default tcMar: Word's TableNormal style is top=0 left=108 bottom=0
            right=108 (twips), so 0pt T/B and 5.4pt L/R. Per-cell tcMar (read
            from tcPr/tcMar) overrides this via inline style. */
-        th, td {{ border: none; padding: 0 5.4pt; text-align: inherit; vertical-align: top; break-inside: auto; }}
+        th, td {{ border: none; padding: 0 5.4pt; text-align: inherit; vertical-align: top; break-inside: auto; overflow-wrap: anywhere; }}
         tr {{ break-inside: auto; }}
         th {{ font-weight: 600; }}
         @media print {{ body {{ background: white; padding: 0; }}
