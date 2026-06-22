@@ -737,6 +737,13 @@ public partial class WordHandler
         var dataUri = LoadImageAsDataUri(relId);
         if (dataUri == null) return;
 
+        // Decide web-compatibility from the part's real content type, not the
+        // returned data URI. PartToDataUri degrades undecodable WMF/EMF to an
+        // SVG placeholder data URI; inferring from the URI string would
+        // misclassify that placeholder as a renderable SVG and route the OLE
+        // preview to the <img> branch instead of the sized placeholder block.
+        var rawContentType = LoadImageContentType(relId);
+
         // Display size comes from the companion v:shape style
         // ("width:Xpt;height:Ypt"), falling back to the w:object
         // dxaOrig/dyaOrig twip attributes if the shape style is missing.
@@ -773,12 +780,13 @@ public partial class WordHandler
         var widthPx = widthPt > 0 ? (long)(widthPt * 96 / 72) : 0;
         var heightPx = heightPt > 0 ? (long)(heightPt * 96 / 72) : 0;
 
-        bool isWebCompatible = dataUri.Contains("image/png")
-            || dataUri.Contains("image/jpeg")
-            || dataUri.Contains("image/gif")
-            || dataUri.Contains("image/svg")
-            || dataUri.Contains("image/webp")
-            || dataUri.Contains("image/bmp");
+        var ctForCompat = rawContentType ?? "";
+        bool isWebCompatible = ctForCompat.Contains("image/png")
+            || ctForCompat.Contains("image/jpeg")
+            || ctForCompat.Contains("image/gif")
+            || ctForCompat.Contains("image/svg")
+            || ctForCompat.Contains("image/webp")
+            || ctForCompat.Contains("image/bmp");
 
         if (isWebCompatible)
         {

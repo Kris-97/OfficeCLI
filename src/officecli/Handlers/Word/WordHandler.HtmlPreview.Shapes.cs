@@ -609,6 +609,27 @@ public partial class WordHandler
         return HtmlPreviewHelper.PartToDataUri(hostPart, relId);
     }
 
+    /// <summary>
+    /// Resolve the raw content type of an image part by relationship ID, using the
+    /// same host-part fallback as LoadImageAsDataUri. Returns null if the part
+    /// cannot be found. Callers that must distinguish a genuinely browser-renderable
+    /// image from a degraded placeholder (PartToDataUri rewrites WMF/EMF to an SVG
+    /// placeholder) should branch on this, not on the returned data URI string.
+    /// </summary>
+    private string? LoadImageContentType(string relId)
+    {
+        var hostPart = _ctx.ImageHostPart ?? (DocumentFormat.OpenXml.Packaging.OpenXmlPart?)_doc.MainDocumentPart;
+        if (hostPart == null) return null;
+        try
+        {
+            return hostPart.GetPartById(relId)?.ContentType;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     // ==================== Group / Shape Rendering ====================
 
     private void RenderGroupHtml(StringBuilder sb, OpenXmlElement group, long groupWidthEmu, long groupHeightEmu,
