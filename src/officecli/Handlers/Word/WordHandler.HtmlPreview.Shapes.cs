@@ -767,12 +767,24 @@ public partial class WordHandler
         {
             var widthPx = extCx / EmuConverter.EmuPerPx;
             var heightPx = extCy / EmuConverter.EmuPerPx;
+            // A shape that receives overlaid header images (floatImages, e.g. a
+            // cover banner + logo floated into a header text box) acts as a
+            // full-width header container, not a sized box. Shrink-wrapping it
+            // to its own (often tiny) text extent makes the global
+            // `img{max-width:100%}` rule clamp a 940px banner to the box width —
+            // collapsing it to a thin strip. Render it as a non-shrink-wrapping
+            // full-width block so the overlay images resolve against the header
+            // content width instead. The overlay imgs get `max-width:none`
+            // (see the floatImages inject loop) so their declared px width wins.
+            bool isOverlayContainer = floatImages is { Count: > 0 };
             // Anchored wrapSquare/wrapTight shape → float so following text
             // wraps beside it; otherwise inline-block (inline / wrapNone /
             // behind / in-front-of-text).
             style = floatCss != null
                 ? $"{floatCss};width:{widthPx}px;min-height:{heightPx}px;box-sizing:border-box"
-                : $"display:inline-block;width:{widthPx}px;min-height:{heightPx}px;vertical-align:top";
+                : isOverlayContainer
+                    ? $"display:block;width:100%;min-height:{heightPx}px"
+                    : $"display:inline-block;width:{widthPx}px;min-height:{heightPx}px;vertical-align:top";
 
             // Rotation on standalone shapes too (was only applied inside groups)
             var sXfrm = spPr?.Elements().FirstOrDefault(e => e.LocalName == "xfrm");
@@ -917,7 +929,11 @@ public partial class WordHandler
                         }
                         else
                         {
-                            sb.Append($"<img src=\"{imgDataUri}\" style=\"float:left;width:{imgW}px;height:{imgH}px;object-fit:cover;{marginCss}\">");
+                            // max-width:none so the overlay's declared px width
+                            // wins over the global img{max-width:100%}: a
+                            // full-width banner (e.g. 940px) must not be clamped
+                            // to the container width and collapse to a strip.
+                            sb.Append($"<img src=\"{imgDataUri}\" style=\"float:left;width:{imgW}px;height:{imgH}px;max-width:none;object-fit:cover;{marginCss}\">");
                         }
                     }
                     catch { }
