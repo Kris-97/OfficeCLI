@@ -1475,6 +1475,14 @@ public partial class WordHandler
         // matches the document default — body-level CSS already declares
         // font-family there, so duplicating it on every run span only bloats
         // the HTML and obscures real per-run overrides.
+        // Complex-script slot (cs/csTheme). On the LTR path the primary `font`
+        // above never reads it, so a run that carries a cs face (Arabic / Hebrew
+        // typesetting) for embedded RTL spans dropped that face entirely. Resolve
+        // it separately and append it as a fallback after the primary/Latin faces
+        // so the browser uses it for complex-script glyphs the others lack. LTR
+        // runs only; the RTL path already resolves cs as the primary `font`.
+        var csFont = isRtlRun ? null
+            : (fonts?.ComplexScript?.Value ?? ResolveThemeFont(fonts?.ComplexScriptTheme?.InnerText));
         if (font != null
             && !font.StartsWith("+", StringComparison.Ordinal)
             && !string.Equals(font, ReadDocDefaults().Font, StringComparison.Ordinal))
@@ -1499,9 +1507,25 @@ public partial class WordHandler
                 && !string.Equals(latinFont, font, StringComparison.Ordinal))
                 ? $"'{CssSanitize(latinFont)}',"
                 : "";
+            var csSuffix = (csFont != null
+                && !csFont.StartsWith("+", StringComparison.Ordinal)
+                && !string.Equals(csFont, font, StringComparison.Ordinal)
+                && !string.Equals(csFont, latinFont, StringComparison.Ordinal))
+                ? $",'{CssSanitize(csFont)}'"
+                : "";
             parts.Add(fallback != null
-                ? $"font-family:{latinPrefix}'{CssSanitize(font)}',{fallback},{generic}"
-                : $"font-family:{latinPrefix}'{CssSanitize(font)}',{generic}");
+                ? $"font-family:{latinPrefix}'{CssSanitize(font)}',{fallback}{csSuffix},{generic}"
+                : $"font-family:{latinPrefix}'{CssSanitize(font)}'{csSuffix},{generic}");
+        }
+        else if (csFont != null
+            && !csFont.StartsWith("+", StringComparison.Ordinal)
+            && !string.Equals(csFont, ReadDocDefaults().Font, StringComparison.Ordinal))
+        {
+            // cs-only LTR run (no Latin/EastAsia slot resolved a non-default face):
+            // the complex-script face is the only one declared, so it leads the
+            // stack. Without this the span emitted no font-family at all.
+            var generic = GenericFontFamily(csFont);
+            parts.Add($"font-family:'{CssSanitize(csFont)}',{generic}");
         }
 
         // Size (stored as half-points)
