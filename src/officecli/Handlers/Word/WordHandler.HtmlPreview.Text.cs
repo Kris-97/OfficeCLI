@@ -67,9 +67,38 @@ public partial class WordHandler
             var tsId = para.ParagraphProperties?.ParagraphStyleId?.Val?.Value;
             if (tsId != null) tabs = ResolveTabStopsFromStyle(tsId);
         }
-        return tabs?.Any(t =>
-            t.Val?.InnerText is "center" or "right"
-            && t.Leader?.InnerText is null or "none") == true;
+        var alignStops = tabs?
+            .Where(t => t.Val?.InnerText is "center" or "right"
+                && t.Leader?.InnerText is null or "none")
+            .ToList();
+        if (alignStops == null || alignStops.Count == 0) return false;
+        // Hanging-indent bullet/list shape (NOT a page-spanning three-part
+        // header): a hanging indent whose center/right tab stops all sit in the
+        // indent gutter (position <= the left indent) is a bullet aligned at the
+        // indent via a tiny right-tab, then text at a left-tab — e.g.
+        // `ind left=520 hanging=260` with stops right@100 + left@260, the bullet
+        // "•" tab-positioned at the hanging origin. The flex band model splits
+        // the line into equal thirds, so the right-aligned bullet band lands ~2/3
+        // across and the text band starts mid-line, rendering the list "centered".
+        // Word positions by absolute tab pos (~left indent), not equal thirds.
+        // Defer these to the positional inline-block tab path, which honours the
+        // actual stop position. The genuine three-part header (no hanging indent,
+        // stops at page-center / right-edge) is unaffected.
+        var pProps = para.ParagraphProperties;
+        var hangingTwips = pProps?.Indentation?.Hanging?.Value
+            ?? ResolveIndentationFromStyle(pProps?.ParagraphStyleId?.Val?.Value)?.Hanging?.Value;
+        if (hangingTwips is string hs && hs != "0" && long.TryParse(hs, out var hangingVal) && hangingVal > 0)
+        {
+            var leftIndentTwips = pProps?.Indentation?.Left?.Value
+                ?? ResolveIndentationFromStyle(pProps?.ParagraphStyleId?.Val?.Value)?.Left?.Value;
+            long leftVal = (leftIndentTwips is string ls && long.TryParse(ls, out var lv)) ? lv : 0;
+            // All qualifying (center/right) stops at/under the left indent → the
+            // tabs live in the list gutter, not across the page → not a header.
+            bool allStopsInGutter = alignStops.All(t =>
+                t.Position?.HasValue == true && t.Position.Value <= leftVal);
+            if (allStopsInGutter) return false;
+        }
+        return true;
     }
 
     /// <summary>
@@ -342,6 +371,17 @@ public partial class WordHandler
         // fldChar.Separate and fldChar.End. Begin already emits the glyph, so
         // suppress the cached run to avoid rendering the checkbox twice.
         bool skipCachedCheckboxDisplay = false;
+        // PAGE / NUMPAGES field-scope tracking. Word stores a PAGE field as the
+        // run sequence: fldChar(begin) → instrText("PAGE") → fldChar(separate) →
+        // <result digits> → fldChar(end). To rewrite ONLY the field-result run
+        // into a dynamic page-number span (and never a literal header/footer
+        // number such as a date "01" or a course code "001"), tag the result
+        // run's HTML with a marker class while it's inside the separate…end
+        // region. ApplyPageNumFields then targets that class instead of blindly
+        // rewriting the first digit run in document order. Fields can nest, so
+        // keep a stack: each entry is the PAGE/NUMPAGES kind (0=other) and
+        // whether we've passed the separator into the result region.
+        var fieldStack = new System.Collections.Generic.Stack<(int kind, bool inResult)>();
 
         foreach (var child in para.ChildElements)
         {
@@ -360,6 +400,38 @@ public partial class WordHandler
                     if (runFldChar == FieldCharValues.End)
                         skipCachedCheckboxDisplay = false;
                     continue;
+                }
+                // PAGE / NUMPAGES field-scope state machine (drives the
+                // page-num-result / num-pages-result tagging below).
+                if (runFldChar == FieldCharValues.Begin)
+                {
+                    fieldStack.Push((0, false));
+                }
+                else if (runFldChar == FieldCharValues.Separate)
+                {
+                    if (fieldStack.Count > 0)
+                    {
+                        var top = fieldStack.Pop();
+                        fieldStack.Push((top.kind, true));
+                    }
+                }
+                else if (runFldChar == FieldCharValues.End)
+                {
+                    if (fieldStack.Count > 0) fieldStack.Pop();
+                }
+                else
+                {
+                    // Classify the field by its instruction text (instrText run).
+                    var instr = run.GetFirstChild<FieldCode>()?.Text;
+                    if (!string.IsNullOrEmpty(instr) && fieldStack.Count > 0)
+                    {
+                        int kind = ClassifyPageFieldInstruction(instr);
+                        if (kind != 0)
+                        {
+                            var top = fieldStack.Pop();
+                            fieldStack.Push((kind, top.inResult));
+                        }
+                    }
                 }
                 // Find drawing (direct child or inside mc:AlternateContent Choice)
                 // SDK's Descendants<Drawing>() naturally skips mc:Fallback (VML w:pict)
@@ -389,7 +461,20 @@ public partial class WordHandler
                     continue;
                 }
 
+                // Tag the result run of a PAGE / NUMPAGES field so
+                // ApplyPageNumFields rewrites exactly this run and never a
+                // literal header/footer number.
+                (int kind, bool inResult) pageFieldTop =
+                    fieldStack.Count > 0 ? fieldStack.Peek() : (0, false);
+                bool tagPageField = pageFieldTop.inResult
+                    && (pageFieldTop.kind == 1 || pageFieldTop.kind == 2);
+                if (tagPageField)
+                    sb.Append(pageFieldTop.kind == 1
+                        ? "<span class=\"page-num-result\">"
+                        : "<span class=\"num-pages-result\">");
                 RenderRunHtml(sb, run, para);
+                if (tagPageField)
+                    sb.Append("</span>");
             }
             else if (child.LocalName is "ins" or "moveTo")
             {

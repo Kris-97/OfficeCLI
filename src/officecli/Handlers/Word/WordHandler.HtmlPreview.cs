@@ -1970,21 +1970,82 @@ public partial class WordHandler
         }
     }
 
+    /// <summary>Classify a Word field instruction string: 1 = PAGE,
+    /// 2 = NUMPAGES, 0 = neither. NUMPAGES is tested first so a NUMPAGES
+    /// instruction is never miscounted as a plain PAGE. Tokens are
+    /// whitespace-delimited and case-insensitive
+    /// (e.g. "PAGE \* MERGEFORMAT").</summary>
+    private static int ClassifyPageFieldInstruction(string? instr)
+    {
+        if (string.IsNullOrEmpty(instr)) return 0;
+        var tokens = instr.Split(new[] { ' ', '\t', '\r', '\n' },
+            StringSplitOptions.RemoveEmptyEntries);
+        foreach (var tok in tokens)
+        {
+            if (tok.Equals("NUMPAGES", StringComparison.OrdinalIgnoreCase)) return 2;
+            if (tok.Equals("PAGE", StringComparison.OrdinalIgnoreCase)) return 1;
+        }
+        return 0;
+    }
+
     /// <summary>
-    /// Conditionally rewrite the first digit-only run into a dynamic page-number
-    /// / total-pages span — but ONLY for the field types the source part really
-    /// carries (<paramref name="hasPage"/> / <paramref name="hasNumPages"/>).
-    /// When neither flag is set the HTML is returned untouched so literal header
-    /// numbers survive verbatim.
+    /// Rewrite the rendered PAGE / NUMPAGES field-result run into a dynamic
+    /// page-number / total-pages span. The result run was tagged at render time
+    /// with a <c>page-num-result</c> / <c>num-pages-result</c> class
+    /// (<see cref="RenderParagraphContentHtml"/>), so the rewrite targets the
+    /// real field scope — never a literal header/footer number (a date "01", a
+    /// course code "001", a year "2021") that merely happens to be the first
+    /// digit run in document order.
+    ///
+    /// <paramref name="hasPage"/> / <paramref name="hasNumPages"/> still gate the
+    /// rewrite: only field kinds the source part actually carries are rewritten.
+    /// A legacy fallback regex handles parts whose result run carries no tag
+    /// (e.g. an empty/uncached field result, or a field whose result digits were
+    /// rendered outside a tagged run) — but it is now scoped to a tagged result
+    /// span first, and only falls through to the first-digit-run heuristic when
+    /// no tagged result span exists, so the date-corruption case never reaches it.
     /// </summary>
     private static string ApplyPageNumFields(string html, bool hasPage, bool hasNumPages)
     {
         if (string.IsNullOrEmpty(html) || (!hasPage && !hasNumPages)) return html;
+
+        // Primary path: the result run was tagged with its field-kind class.
+        // Replace the whole tagged span's inner content with the dynamic
+        // placeholder span (keeping the renumber-loop class hooks intact).
+        var pageTag = new Regex(@"<span class=""page-num-result"">.*?</span>",
+            RegexOptions.Singleline);
+        var numPagesTag = new Regex(@"<span class=""num-pages-result"">.*?</span>",
+            RegexOptions.Singleline);
+        bool didPage = false, didNumPages = false;
+        if (hasPage && pageTag.IsMatch(html))
+        {
+            html = pageTag.Replace(html,
+                "<span class=\"page-num-field\"><!--PAGE_NUM--></span>", 1);
+            didPage = true;
+        }
+        if (hasNumPages && numPagesTag.IsMatch(html))
+        {
+            html = numPagesTag.Replace(html,
+                "<span class=\"num-pages-field\"><!--NUM_PAGES--></span>", 1);
+            didNumPages = true;
+        }
+        // Strip any leftover (unmatched) result tags so they don't leak the
+        // raw class into the preview; the inner digits stay visible.
+        html = pageTag.Replace(html, m =>
+            m.Value.Substring("<span class=\"page-num-result\">".Length,
+                m.Value.Length - "<span class=\"page-num-result\">".Length - "</span>".Length));
+        html = numPagesTag.Replace(html, m =>
+            m.Value.Substring("<span class=\"num-pages-result\">".Length,
+                m.Value.Length - "<span class=\"num-pages-result\">".Length - "</span>".Length));
+
+        // Legacy fallback: only when the field carried no tagged result run
+        // (e.g. fldSimple with a cached <w:t>, where the result isn't a
+        // begin/separate/end run sequence). Scoped exactly as before.
         var pat = new Regex(@"(<(?:span|p)[^>]*>)\s*\d+\s*(</(?:span|p)>)");
-        if (hasPage)
+        if (hasPage && !didPage)
             html = pat.Replace(html,
                 "$1<span class=\"page-num-field\"><!--PAGE_NUM--></span>$2", 1);
-        if (hasNumPages)
+        if (hasNumPages && !didNumPages)
             html = pat.Replace(html,
                 "$1<span class=\"num-pages-field\"><!--NUM_PAGES--></span>$2", 1);
         return html;
