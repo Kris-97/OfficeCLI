@@ -2380,17 +2380,35 @@ public partial class WordHandler
             var ptabEl = run.GetFirstChild<PositionalTab>();
             if (ptabEl != null)
             {
-                node.Type = "ptab";
                 // Open XML SDK v3 enum .ToString() returns "FooValues { }"
                 // — use .InnerText to get the actual XML attribute value
                 // ("center", "right", "begin", etc.). Same trap as the
                 // LineSpacingRuleValues note in WordHandler CLAUDE.md.
-                if (ptabEl.Alignment?.HasValue == true)
-                    node.Format["align"] = ptabEl.Alignment.InnerText;
-                if (ptabEl.RelativeTo?.HasValue == true)
-                    node.Format["relativeTo"] = ptabEl.RelativeTo.InnerText;
-                if (ptabEl.Leader?.HasValue == true)
-                    node.Format["leader"] = ptabEl.Leader.InnerText;
+                var ptabAlign = ptabEl.Alignment?.HasValue == true ? ptabEl.Alignment.InnerText : null;
+                var ptabRelTo = ptabEl.RelativeTo?.HasValue == true ? ptabEl.RelativeTo.InnerText : null;
+                var ptabLeader = ptabEl.Leader?.HasValue == true ? ptabEl.Leader.InnerText : null;
+                // BUG-DUMP-DELTAB sibling (BUG-DUMP-PTABTEXT): when the run ALSO
+                // carries text (<w:t> or <w:delText>), the standalone `add ptab`
+                // type-upgrade would drop that co-resident text — and unlike a
+                // plain tab the ptab can't ride back through GetRunText's \t, so
+                // keeping it a plain run would instead drop the ptab. Keep the run
+                // a `run` AND carry the ptab as inline props so AddRun rebuilds
+                // <w:ptab/> ahead of the text, preserving BOTH.
+                bool hasText = run.Elements<Text>().Any() || run.Elements<DeletedText>().Any();
+                if (hasText)
+                {
+                    node.Format["ptabInline"] = "true";
+                    if (ptabAlign != null) node.Format["ptabInline.align"] = ptabAlign;
+                    if (ptabRelTo != null) node.Format["ptabInline.relativeTo"] = ptabRelTo;
+                    if (ptabLeader != null) node.Format["ptabInline.leader"] = ptabLeader;
+                }
+                else
+                {
+                    node.Type = "ptab";
+                    if (ptabAlign != null) node.Format["align"] = ptabAlign;
+                    if (ptabRelTo != null) node.Format["relativeTo"] = ptabRelTo;
+                    if (ptabLeader != null) node.Format["leader"] = ptabLeader;
+                }
             }
         }
         if (node.Type == "run")
@@ -2552,7 +2570,11 @@ public partial class WordHandler
         // checks "no Text element" (not "node.Text empty") because
         // GetRunText now surfaces TabChar as \t in node.Text. A pure
         // <w:r><w:tab/></w:r> run has no <w:t> child but node.Text="\t".
-        if (node.Type == "run" && !run.Elements<Text>().Any())
+        // BUG-DUMP-DELTAB: also exclude runs carrying <w:delText> (a tracked
+        // deletion). GetRunText surfaces delText into node.Text; without this
+        // exclusion a deleted run mixing <w:tab/> + <w:delText> was reclassified
+        // tab-only and node.Text wiped to "", silently dropping the deleted text.
+        if (node.Type == "run" && !run.Elements<Text>().Any() && !run.Elements<DeletedText>().Any())
         {
             var tabEls = run.Elements<TabChar>().ToList();
             // BUG-DUMP-R25-2: a tab-only run carrying MULTIPLE <w:tab/> chars
@@ -2580,7 +2602,7 @@ public partial class WordHandler
         // with text="\n" that the emitter mis-rendered. A mixed run
         // <w:t>foo</w:t><w:br/> still has a <w:t> child, so it stays a run
         // (text="foo\n") and the inline break is preserved as \n.
-        if (node.Type == "run" && !run.Elements<Text>().Any())
+        if (node.Type == "run" && !run.Elements<Text>().Any() && !run.Elements<DeletedText>().Any())
         {
             var breakEl = run.GetFirstChild<Break>();
             if (breakEl != null)
