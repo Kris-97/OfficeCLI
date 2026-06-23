@@ -1731,6 +1731,19 @@ public partial class WordHandler
             // behavior, so don't emit a redundant color for the common case.
             if (bgHex != null && IsColorDark(bgHex))
                 parts.Add("color:#FFFFFF");
+            // R102-2: an EXPLICIT run-level w:color val="auto" (Word's
+            // "Automatic" = black on a light backdrop) must beat any inherited
+            // color — notably the global `a { color:#2B579A }` rule when this
+            // run lives inside a <w:hyperlink> with rStyle="Hyperlink". OOXML
+            // direct run color (incl. auto) wins over the rStyle character
+            // style's color, so the email link renders black like Word, not the
+            // style's blue. Emitting nothing here would let the ancestor <a>
+            // blue leak through. Only fire on an explicit auto value: a plain
+            // Hyperlink run with NO run-level color (rProps.Color == null) keeps
+            // the inherited blue; the dark-bg reverse-video branch above already
+            // claimed the white case.
+            else if (rProps.Color?.Val?.Value == "auto")
+                parts.Add("color:#000000");
         }
 
         // Highlight
