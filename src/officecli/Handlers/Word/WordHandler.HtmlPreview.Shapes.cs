@@ -1036,6 +1036,27 @@ public partial class WordHandler
         {
             // Defer fill/border to the SVG so the host div stays transparent.
             style += ";overflow:visible";
+
+            // The overlay SVG uses height:100%, which only resolves when the
+            // host div has a *definite* height. The standalone path emits
+            // `min-height:{h}px` (grow-to-content) — not a definite height —
+            // so an SVG with viewBox 0 0 100 100 and width:100% falls back to
+            // its 1:1 intrinsic aspect ratio and renders as a tall square. For
+            // an extremely wide/short connector (e.g. a signature line:
+            // cx=4524375 cy=9525 EMU → 475px × 1px), that square turns the
+            // box-diagonal line endpoint (0,0→100,100) into a long page-spanning
+            // diagonal instead of a near-horizontal stroke. Pin a definite
+            // height equal to the shape's ext cy so the SVG squashes to the real
+            // box, collapsing the diagonal to the connector's true orientation.
+            // (The positioned/group path already emits a definite `height:%`.)
+            if (standalone)
+            {
+                // Clamp to >=1px: a perfectly horizontal connector (cy≈0) would
+                // otherwise collapse the box to 0px and hide the stroke.
+                var svgHeightPx = Math.Max(1, extCy / EmuConverter.EmuPerPx);
+                style = System.Text.RegularExpressions.Regex.Replace(
+                    style, @"min-height:\d+px", $"height:{svgHeightPx}px");
+            }
         }
         else
         {
@@ -1092,7 +1113,13 @@ public partial class WordHandler
                 ?? ExtractFirstGradientColor(fillCss)
                 ?? "transparent";
             var (borderColor, borderWidth) = ExtractBorderParts(borderCss);
-            RenderPrstGeomSvg(sb, prst!, svgFill, borderColor ?? "#000", borderWidth ?? 1);
+            // Connector orientation: flipH/flipV on the shape's a:xfrm decide
+            // which box diagonal the stroke runs along. No flip → TL→BR;
+            // flipV → BL→TR; flipH → TR→BL; both → BR→TL.
+            var geomXfrm = spPr?.Elements().FirstOrDefault(e => e.LocalName == "xfrm");
+            bool flipH = IsFlipSet(geomXfrm, "flipH");
+            bool flipV = IsFlipSet(geomXfrm, "flipV");
+            RenderPrstGeomSvg(sb, prst!, svgFill, borderColor ?? "#000", borderWidth ?? 1, flipH, flipV);
         }
 
         if (txbx != null)
@@ -1244,8 +1271,16 @@ public partial class WordHandler
     /// The SVG uses viewBox="0 0 100 100" and preserveAspectRatio="none"
     /// so it stretches to the host div's full size.
     /// </summary>
+    /// <summary>Read a flipH/flipV boolean off an a:xfrm element.</summary>
+    private static bool IsFlipSet(OpenXmlElement? xfrm, string name)
+    {
+        var v = xfrm?.GetAttributes().FirstOrDefault(a => a.LocalName == name).Value;
+        return v == "1" || v == "true";
+    }
+
     private static void RenderPrstGeomSvg(
-        StringBuilder sb, string prst, string fill, string stroke, double strokeW)
+        StringBuilder sb, string prst, string fill, string stroke, double strokeW,
+        bool flipH = false, bool flipV = false)
     {
         // Normalize stroke width to viewBox coordinates: at 100-unit viewBox
         // and typical host size ~150px, 1px ≈ 0.67 units. Keep as-is since
@@ -1263,8 +1298,16 @@ public partial class WordHandler
         {
             case "line":
             case "straightConnector1":
-                // Diagonal from top-left to bottom-right.
-                sb.Append($"<line x1=\"0\" y1=\"0\" x2=\"100\" y2=\"100\" stroke=\"{stroke}\" stroke-width=\"{sw}\" vector-effect=\"non-scaling-stroke\"/>");
+                // The stroke runs along a box diagonal; flipH/flipV pick which
+                // one. Within the connector's wide/short bounding box this
+                // diagonal renders as the true near-horizontal (or near-vertical)
+                // line. No flip → TL→BR; flipV only → BL→TR; flipH only → TR→BL;
+                // both → BR→TL.
+                int x1 = flipH ? 100 : 0;
+                int y1 = flipV ? 100 : 0;
+                int x2 = flipH ? 0 : 100;
+                int y2 = flipV ? 0 : 100;
+                sb.Append($"<line x1=\"{x1}\" y1=\"{y1}\" x2=\"{x2}\" y2=\"{y2}\" stroke=\"{stroke}\" stroke-width=\"{sw}\" vector-effect=\"non-scaling-stroke\"/>");
                 break;
             case "rightArrow":
                 // Classic block arrow pointing right: body 0..70, head 70..100.
