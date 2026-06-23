@@ -326,6 +326,43 @@ public partial class WordHandler
                 }
             }
 
+            // R126: per-column max single-span dxa tcW. Word lets a cell's explicit
+            // tcW drive its column when tcW > gridCol; under table-layout:fixed the
+            // <col> width pins the cell instead, so a label cell with tcW=810 over a
+            // gridCol=270 column collapses to ~13.5pt (vertical one-char-per-line).
+            // Capture the widest single-span dxa tcW per column to correct the gridCol
+            // below — but ONLY from rows whose total gridSpan equals colCount. Such a
+            // row has exactly one cell per grid column, so cell index reliably maps to
+            // column index AND each cell occupies exactly one column (its tcW is that
+            // column's intended width). Rows that don't cover the grid carry cells that
+            // effectively span multiple columns with no gridSpan element (e.g. a single
+            // tcW=10350 full-width cell, or tcW boundaries that don't align with gridCol
+            // boundaries); attributing their tcW to one column would mis-widen it — that
+            // ambiguous geometry is the deferred R89 class, left on the gridCol path.
+            var dxaMaxByCol = new double?[colCount];
+            foreach (var r in table.Elements<TableRow>())
+            {
+                var rowCells = r.Elements<TableCell>().ToList();
+                int rowSpanTotal = rowCells.Sum(c => { var s = c.TableCellProperties?.GridSpan?.Val?.Value ?? 1; return s < 1 ? 1 : s; });
+                if (rowSpanTotal != colCount) continue; // only full-grid rows map cell→column reliably
+                int ci = 0;
+                foreach (var tc in rowCells)
+                {
+                    if (ci >= colCount) break;
+                    var span = tc.TableCellProperties?.GridSpan?.Val?.Value ?? 1;
+                    if (span < 1) span = 1;
+                    var tcW = tc.TableCellProperties?.TableCellWidth;
+                    if (span == 1 && tcW?.Type?.InnerText == "dxa"
+                        && double.TryParse(tcW.Width?.Value, System.Globalization.NumberStyles.Float,
+                            System.Globalization.CultureInfo.InvariantCulture, out var dxaVal) && dxaVal > 0
+                        && (dxaMaxByCol[ci] == null || dxaVal > dxaMaxByCol[ci]))
+                    {
+                        dxaMaxByCol[ci] = dxaVal;
+                    }
+                    ci += span;
+                }
+            }
+
             int colIdx = 0;
             foreach (var col in tblGrid.Elements<GridColumn>())
             {
@@ -340,7 +377,14 @@ public partial class WordHandler
                 }
                 else if (w != null && isFixedLayout)
                 {
-                    var pt = double.Parse(w, System.Globalization.CultureInfo.InvariantCulture) / 20.0; // twips to pt
+                    var twips = double.Parse(w, System.Globalization.CultureInfo.InvariantCulture);
+                    // R126: if a single-span cell in this column carries an explicit dxa
+                    // tcW wider than the gridCol, the cell's width drives the column (Word
+                    // behavior). Widen the <col> to that tcW so fixed layout doesn't pin a
+                    // label cell to a too-narrow gridCol and collapse its text vertically.
+                    if (colIdx < colCount && dxaMaxByCol[colIdx] is double dxaW && dxaW > twips)
+                        twips = dxaW;
+                    var pt = twips / 20.0; // twips to pt
                     sb.Append($"<col style=\"width:{pt:0.##}pt\" data-col-twips=\"{w}\">");
                 }
                 else if (w != null && colTotal > 0 && twipsByCol[colIdx] > 0)
