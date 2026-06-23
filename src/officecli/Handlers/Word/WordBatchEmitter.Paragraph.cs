@@ -15,6 +15,38 @@ public static partial class WordBatchEmitter
     /// paragraph); we issue a `set` instead of a fresh `add` so the existing
     /// paragraph gets reused rather than duplicated.
     /// </summary>
+    // BUG-DUMP26-01 / BUG-DUMP-SECTNUM: a paragraph's numbering props must never
+    // ride on an `add p` / `set p` as ad-hoc numbering. (1) numId/numLevel that came
+    // from style inheritance (ResolveNumPrFromStyle, no direct w:numPr) must be
+    // dropped — the style already supplies them and emitting them would promote
+    // inherited→explicit on replay. (2) When a direct numId is present, the
+    // abstractNum/num pair is already in /numbering (raw-set wholesale by
+    // EmitNumberingRaw); forwarding numFmt/listStyle/start to AddParagraph triggers
+    // ad-hoc numbering-definition creation — Word allocates a FRESH numId, orphaning
+    // the original abstract numbering's level rPr (color/bold/custom marker). Drop
+    // those so the paragraph just attaches by numId+numLevel to the existing def.
+    // Applied by BOTH the normal paragraph emit AND the section-carrier paragraph
+    // `set` (TryEmitInlineSectionBreak), which builds its pPr props independently.
+    private static void ApplyNumberingInheritanceFilters(IDictionary<string, string> props, DocumentNode pNode)
+    {
+        bool numInherited = pNode.Format.TryGetValue("numInherited", out var niVal)
+            && string.Equals(niVal?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
+        if (numInherited)
+        {
+            props.Remove("numId");
+            props.Remove("numLevel");
+            props.Remove("numFmt");
+            props.Remove("listStyle");
+            props.Remove("start");
+        }
+        if (props.ContainsKey("numId"))
+        {
+            props.Remove("numFmt");
+            props.Remove("listStyle");
+            props.Remove("start");
+        }
+    }
+
     private static void EmitParagraph(WordHandler word, string sourcePath, string parentPath,
                                       int targetIndex, List<BatchItem> items, bool autoPresent,
                                       BodyEmitContext? ctx = null)
@@ -73,30 +105,7 @@ public static partial class WordBatchEmitter
         // them would semantically promote inherited→explicit on replay.
         // Mirrors the first-run hoist precedent for run-character props
         // inherited from styles.
-        bool numInherited = pNode.Format.TryGetValue("numInherited", out var niVal)
-            && string.Equals(niVal?.ToString(), "true", StringComparison.OrdinalIgnoreCase);
-        if (numInherited)
-        {
-            props.Remove("numId");
-            props.Remove("numLevel");
-            props.Remove("numFmt");
-            props.Remove("listStyle");
-            props.Remove("start");
-        }
-        // When a paragraph carries numId, the abstractNum/num pair is already
-        // in /numbering (raw-set wholesale by EmitNumberingRaw). Forwarding
-        // numFmt/listStyle/start to AddParagraph triggers ad-hoc
-        // numbering-definition creation in WordHandler.Add — Word allocates
-        // a fresh numId (1→9, 2→16, …) and the paragraph references the
-        // new one, orphaning the original abstract numbering's level rPr
-        // (color, bold, custom marker text). Drop those keys so the
-        // paragraph just attaches by numId+numLevel to the existing def.
-        if (props.ContainsKey("numId"))
-        {
-            props.Remove("numFmt");
-            props.Remove("listStyle");
-            props.Remove("start");
-        }
+        ApplyNumberingInheritanceFilters(props, pNode);
         // BUG-R4F-02: a paragraph may carry a numId that does not resolve to any
         // <w:num> in /numbering (dangling reference). This is valid OOXML — Word
         // renders the paragraph, just without a list marker — but the Add-side
@@ -725,6 +734,14 @@ public static partial class WordBatchEmitter
                          .Where(k => k.StartsWith("sectionBreak.", StringComparison.OrdinalIgnoreCase))
                          .ToList())
                 sectPProps.Remove(k);
+            // BUG-DUMP-SECTNUM: this `set` reuses AddParagraph/SetElement's numbering
+            // vocabulary, so it must apply the SAME inheritance filters as the normal
+            // emit (line ~70). Without it a section-carrier paragraph that inherits
+            // numbering from its style emitted numId+numFmt+start on the `set`,
+            // triggering ad-hoc numbering-definition creation: a spurious num +
+            // abstractNum in numbering.xml and a direct numPr stamped on a paragraph
+            // that had none in the source.
+            ApplyNumberingInheritanceFilters(sectPProps, pNode);
             if (sectPProps.Count > 0)
             {
                 items.Add(new BatchItem
