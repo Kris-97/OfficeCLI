@@ -2916,7 +2916,14 @@ public static partial class WordBatchEmitter
         => System.Text.RegularExpressions.Regex.IsMatch(
                sdtXml, @"<[A-Za-z0-9]+:repeatingSection(Item)?[ />]")
         || System.Text.RegularExpressions.Regex.IsMatch(
-               sdtXml, @"<w:docPartObj[ />]");
+               sdtXml, @"<w:docPartObj[ />]")
+        // BUG-DUMP-SDT-CHECKBOX: a <w14:checkbox> content control's sdtPr type
+        // marker (+ its checked / checkedState / uncheckedState) is not expressible
+        // through the typed `add sdt text=` path, so without recognising it here the
+        // checkbox SDT round-tripped as a plain rich-text SDT — losing the checkbox
+        // type and its checked state. Match any namespace prefix (w14/w15/…).
+        || System.Text.RegularExpressions.Regex.IsMatch(
+               sdtXml, @"<[A-Za-z0-9]+:checkbox[ />]");
 
     private static bool IsRichBlockSdt(string sdtXml)
     {
@@ -2961,6 +2968,14 @@ public static partial class WordBatchEmitter
         // direct paragraph formatting is present → raw-set verbatim. (An empty
         // <w:pPr/> or <w:pPr></w:pPr> has no children and won't match.)
         if (System.Text.RegularExpressions.Regex.IsMatch(sdtXml, "<w:pPr>\\s*<w:"))
+            return true;
+        // BUG-DUMP-SDT-NESTED: a NESTED <w:sdt> (content control inside this one)
+        // can't round-trip through the flat `add sdt text=` path — AddSdt seeds a
+        // single plain run from the concatenated text, dropping the inner SDT
+        // wrapper (its tag/id/type). The outer's own <w:sdt> opening tag is one
+        // match; a second means a nested control → raw-set verbatim. (<w:sdtPr> /
+        // <w:sdtContent> / <w:sdtEndPr> don't match "<w:sdt" + space/'>'.)
+        if (System.Text.RegularExpressions.Regex.Matches(sdtXml, "<w:sdt[ >]").Count > 1)
             return true;
         return sdtXml.Contains("<w:hyperlink", StringComparison.Ordinal)
             || sdtXml.Contains("<w:fldChar", StringComparison.Ordinal)
