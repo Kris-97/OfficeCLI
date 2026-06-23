@@ -315,7 +315,12 @@ public partial class WordHandler
         // carrier that has only @distance round-trips.
         bool hasLnDist = properties.TryGetValue("lineNumberDistance", out var lnDistVal) ||
                          properties.TryGetValue("linenumberdistance", out lnDistVal);
-        if (hasLineNumbers || hasCountBy || hasLnDist)
+        // BUG-DUMP-SECT-LNSTART: lnNumType/@w:start — sibling attr to countBy/
+        // distance; mirror TrySetSectionLayout's lineNumberStart case so a
+        // mid-document carrier round-trips its first-line-number.
+        bool hasLnStart = properties.TryGetValue("lineNumberStart", out var lnStartVal) ||
+                          properties.TryGetValue("linenumberstart", out lnStartVal);
+        if (hasLineNumbers || hasCountBy || hasLnDist || hasLnStart)
         {
             // BUG-DUMP-SECT-LNDIST: only stamp @w:restart when the source
             // actually carried lineNumbers — fabricating restart="continuous" on
@@ -342,6 +347,13 @@ public partial class WordHandler
                     throw new ArgumentException(
                         $"Invalid lineNumberDistance value: '{lnDistVal}'. Must be a non-negative integer (twips).");
                 lnType.Distance = lnDist.ToString();
+            }
+            if (hasLnStart)
+            {
+                if (!int.TryParse(lnStartVal, out var lnStart) || lnStart < 0)
+                    throw new ArgumentException(
+                        $"Invalid lineNumberStart value: '{lnStartVal}'. Must be a non-negative integer.");
+                lnType.Start = (short)lnStart;
             }
             InsertSectPrChildInOrder(sectPr, lnType);
         }
@@ -414,6 +426,56 @@ public partial class WordHandler
                 InsertSectPrChildInOrder(sectPr, pgNum);
             }
             pgNum.Start = startN;
+        }
+
+        // BUG-DUMP-SECT-CHAPNUM: chapter-number page numbering on a mid-document
+        // section carrier. CONSISTENCY(add-set-symmetry): mirror TrySetSectionLayout's
+        // chapStyle/chapSep cases so `add section` round-trips them (the carrier
+        // sectPr readback now forwards sectionBreak.chapStyle/chapSep).
+        if (properties.TryGetValue("chapStyle", out var chapStyleVal)
+            || properties.TryGetValue("chapstyle", out chapStyleVal))
+        {
+            if (!byte.TryParse(chapStyleVal, out var lvl) || lvl < 1 || lvl > 9)
+                throw new ArgumentException(
+                    $"Invalid chapStyle value: '{chapStyleVal}'. Must be 1-9 (heading level).");
+            var pgNum = sectPr.GetFirstChild<PageNumberType>();
+            if (pgNum == null)
+            {
+                pgNum = new PageNumberType();
+                InsertSectPrChildInOrder(sectPr, pgNum);
+            }
+            pgNum.ChapterStyle = lvl;
+        }
+        if (properties.TryGetValue("chapSep", out var chapSepVal)
+            || properties.TryGetValue("chapsep", out chapSepVal))
+        {
+            var pgNum = sectPr.GetFirstChild<PageNumberType>();
+            if (pgNum == null)
+            {
+                pgNum = new PageNumberType();
+                InsertSectPrChildInOrder(sectPr, pgNum);
+            }
+            pgNum.ChapterSeparator = chapSepVal.ToLowerInvariant() switch
+            {
+                "hyphen" or "-" => ChapterSeparatorValues.Hyphen,
+                "period" or "." => ChapterSeparatorValues.Period,
+                "colon" or ":" => ChapterSeparatorValues.Colon,
+                "emdash" or "—" => ChapterSeparatorValues.EmDash,
+                "endash" or "–" => ChapterSeparatorValues.EnDash,
+                _ => throw new ArgumentException(
+                    $"Invalid chapSep value: '{chapSepVal}'. Valid: hyphen, period, colon, emDash, enDash.")
+            };
+        }
+
+        // BUG-DUMP-SECT-NOENDNOTE: <w:noEndnote/> suppresses endnote collection for
+        // the section. CONSISTENCY(add-set-symmetry): mirror TrySetSectionLayout's
+        // noendnote case for a mid-document carrier.
+        if ((properties.TryGetValue("noEndnote", out var noEnVal)
+             || properties.TryGetValue("noendnote", out noEnVal))
+            && IsTruthy(noEnVal))
+        {
+            sectPr.RemoveAllChildren<NoEndnote>();
+            InsertSectPrChildInOrder(sectPr, new NoEndnote());
         }
 
         // BUG-DUMP-SECT-VALIGN: vertical text alignment on the page

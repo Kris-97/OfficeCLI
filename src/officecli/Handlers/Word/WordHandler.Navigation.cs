@@ -4083,9 +4083,25 @@ public partial class WordHandler
                     node.Format["sectionBreak.pageStart"] = pgNum.Start.Value;
                 if (pgNum?.Format?.Value != null)
                     node.Format["sectionBreak.pageNumFmt"] = pgNum.Format.InnerText;
+                // BUG-DUMP-SECT-CHAPNUM: chapter-number page numbering (chapStyle =
+                // heading style index, chapSep = separator between chapter and page,
+                // e.g. "1-1"/"2.3") on a mid-document section carrier. The body-sectPr
+                // readback emits both; without mirroring them here a non-trailing
+                // section's page numbers silently lost their chapter prefix/separator.
+                if (pgNum?.ChapterStyle?.Value != null)
+                    node.Format["sectionBreak.chapStyle"] = pgNum.ChapterStyle.Value;
+                if (pgNum?.ChapterSeparator?.Value != null)
+                    node.Format["sectionBreak.chapSep"] = pgNum.ChapterSeparator.InnerText;
 
                 if (inlineSectPr.GetFirstChild<TitlePage>() != null)
                     node.Format["sectionBreak.titlePage"] = true;
+
+                // BUG-DUMP-SECT-NOENDNOTE: <w:noEndnote/> suppresses endnote
+                // collection for the section. The body-sectPr readback emits it;
+                // omitting it here let suppressed endnotes reappear in a non-trailing
+                // section on round-trip.
+                if (IsToggleOn(inlineSectPr.GetFirstChild<NoEndnote>()))
+                    node.Format["sectionBreak.noEndnote"] = "true";
 
                 // BUG-DUMP-SECT-PAPERSRC: printer paper-source bins on a
                 // mid-document section carrier. Surface as sectionBreak.paperSrc.*
@@ -4230,6 +4246,11 @@ public partial class WordHandler
                         };
                     if (lnNum.CountBy?.Value is short cb && cb > 1)
                         node.Format["sectionBreak.lineNumberCountBy"] = cb;
+                    // BUG-DUMP-SECT-LNSTART: w:lnNumType/@w:start (first line number)
+                    // on a mid-document carrier — body-sectPr readback emits it; the
+                    // carrier dropped it, restarting line numbering at the default.
+                    if (lnNum.Start?.Value is short sbLnStart)
+                        node.Format["sectionBreak.lineNumberStart"] = (int)sbLnStart;
                     // BUG-DUMP-SECT-LNDIST: w:lnNumType/@w:distance (gutter twips).
                     if (lnNum.Distance?.Value is string sbLnDistRaw
                         && int.TryParse(sbLnDistRaw, out var sbLnDist))
