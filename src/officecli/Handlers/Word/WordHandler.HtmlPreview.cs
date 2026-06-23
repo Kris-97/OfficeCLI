@@ -2814,6 +2814,16 @@ public partial class WordHandler
                         // so an inline keyword doesn't override the ::marker.
                         var bulletType = GetUlListStyleTypeCss(numId, ilvl, lvlText);
                         listStyleParts += $";list-style-type:{bulletType}";
+                        // CONSISTENCY(bullet-text-indent-reset): a bullet uses the
+                        // native ::marker (outside the content box), so it must NOT
+                        // carry a hanging text-indent. When a bullet list nests
+                        // under an ordered item, the parent <li>'s negative
+                        // text-indent (calc(-markerWidth - padding)) inherits into
+                        // this <ul> and pulls the first line left OVER the disc,
+                        // hiding the marker behind the text. Reset to 0 here so the
+                        // disc sits in the padding where Word draws it. Ordered
+                        // children re-establish their own hanging indent per item.
+                        listStyleParts += ";text-indent:0";
                     }
                     var indentStyle = $" style=\"{listStyleParts}\"";
 

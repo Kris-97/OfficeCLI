@@ -959,6 +959,10 @@ public partial class WordHandler
             // override the ::marker font-family.
             var bulletType = GetUlListStyleTypeCss(numId, ilvl, lvlText);
             listStyleParts += $";list-style-type:{bulletType}";
+            // CONSISTENCY(bullet-text-indent-reset): mirror the body path — a
+            // bullet's native ::marker must not inherit an ordered ancestor's
+            // hanging text-indent, which would pull the first line over the disc.
+            listStyleParts += ";text-indent:0";
         }
 
         if (cellListTag == null)
