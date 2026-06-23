@@ -441,13 +441,59 @@ public partial class WordHandler
                 }
                 // Legacy Office 2003 smart tags (<w:smartTag>) parse as an
                 // OpenXmlUnknownElement whose nested <w:r> are also unknown, so
-                // Descendants<Run>() finds none and the wrapped text would be
-                // dropped. Fall back to the raw text when no run/hyperlink was
-                // rendered so smart-tagged content (e.g. "CALIFORNIA") survives.
-                if (!child.Descendants<Hyperlink>().Any() && !child.Descendants<Run>().Any()
-                    && !string.IsNullOrEmpty(child.InnerText))
+                // Descendants<Run>() finds none. Rebuild each unknown <w:r> as a
+                // typed Run from its OuterXml and render it through the normal
+                // run path so its rPr (italic, size, color, …) is preserved —
+                // emitting child.InnerText here would drop all formatting,
+                // making smartTag-wrapped runs render upright while their
+                // byte-identical direct-child siblings render italic
+                // (R102-1: "Bucharest"/"Romania" upright inside an all-italic
+                // affiliation line). Bare InnerText remains the last resort.
+                if (!child.Descendants<Hyperlink>().Any() && !child.Descendants<Run>().Any())
                 {
-                    sb.Append(System.Net.WebUtility.HtmlEncode(child.InnerText));
+                    bool renderedAny = false;
+                    foreach (var unkRun in child.Descendants<DocumentFormat.OpenXml.OpenXmlUnknownElement>())
+                    {
+                        if (unkRun.LocalName != "r"
+                            || unkRun.NamespaceUri != "http://schemas.openxmlformats.org/wordprocessingml/2006/main")
+                            continue;
+                        // A nested smartTag's runs are picked up by the outer
+                        // Descendants pass already; skip runs that sit inside a
+                        // deeper smartTag/customXml so they aren't rendered twice.
+                        bool nestedDeeper = false;
+                        for (var anc = unkRun.Parent; anc != null && anc != child; anc = anc.Parent)
+                            if (anc is DocumentFormat.OpenXml.OpenXmlUnknownElement uw
+                                && uw.NamespaceUri == "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+                                && (uw.LocalName == "smartTag" || uw.LocalName == "customXml"))
+                            { nestedDeeper = true; break; }
+                        if (nestedDeeper) continue;
+                        Run? typedRun = null;
+                        try
+                        {
+                            // OuterXml of an unknown <w:r> may omit the xmlns:w
+                            // declaration when the prefix is bound on an ancestor;
+                            // new Run(xml) then can't bind the prefix. Inject the
+                            // WordprocessingML namespace when it's missing so the
+                            // fragment parses standalone.
+                            var xml = unkRun.OuterXml;
+                            if (!string.IsNullOrEmpty(xml) && !xml.Contains("xmlns:w=", StringComparison.Ordinal))
+                                xml = xml.Replace("<w:r ",
+                                        "<w:r xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" ",
+                                        StringComparison.Ordinal)
+                                    .Replace("<w:r>",
+                                        "<w:r xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\">",
+                                        StringComparison.Ordinal);
+                            typedRun = new Run(xml);
+                        }
+                        catch { typedRun = null; }
+                        if (typedRun != null)
+                        {
+                            RenderRunHtml(sb, typedRun, para);
+                            renderedAny = true;
+                        }
+                    }
+                    if (!renderedAny && !string.IsNullOrEmpty(child.InnerText))
+                        sb.Append(System.Net.WebUtility.HtmlEncode(child.InnerText));
                 }
             }
         }
