@@ -1649,7 +1649,19 @@ public static partial class WordBatchEmitter
                               or "spaceBeforeLines" or "spaceAfterLines" or "alignment" or "align"
                               or "direction" or "leftIndent" or "rightIndent" or "firstLine"
                               or "indent" or "firstLineIndent" or "hangingIndent"
-                              or "hanging" or "contextualSpacing" or "spaceBeforeAuto" or "spaceAfterAuto";
+                              or "hanging" or "contextualSpacing" or "spaceBeforeAuto" or "spaceAfterAuto"
+                          // BUG-DUMP-NOTE-PPR-SWEEP: the rest of the direct
+                          // paragraph-formatting vocabulary the body readback emits and
+                          // ApplyParagraphLevelProperty applies — forwarded here so a
+                          // note/comment first paragraph keeps them (they were dropped
+                          // by this curated allowlist). (framePr / textDirection /
+                          // cnfStyle have no ApplyParagraphLevelProperty case yet, so
+                          // they stay out to avoid spurious unsupported warnings.)
+                          or "keepNext" or "keepLines" or "pageBreakBefore" or "widowControl"
+                          or "suppressLineNumbers" or "suppressAutoHyphens" or "suppressOverlap"
+                          or "kinsoku" or "wordWrap" or "overflowPunct" or "topLinePunct"
+                          or "autoSpaceDE" or "autoSpaceDN" or "adjustRightInd" or "snapToGrid"
+                          or "mirrorIndents" or "textAlignment" or "outlineLvl" or "textboxTightWrap";
                     if (isParaKey && !props.ContainsKey(k))
                         props[k] = v.ToString()!;
                 }
@@ -2156,6 +2168,18 @@ public static partial class WordBatchEmitter
                           // replay and shifted the page bottom):
                           or "indent" or "firstLineIndent" or "hangingIndent"
                           or "hanging" or "contextualSpacing" or "spaceBeforeAuto" or "spaceAfterAuto"
+                          // BUG-DUMP-NOTE-PPR-SWEEP: the rest of the direct
+                          // paragraph-formatting vocabulary the body readback emits and
+                          // ApplyParagraphLevelProperty applies — forwarded here so a
+                          // note/comment first paragraph keeps them (they were dropped
+                          // by this curated allowlist). (framePr / textDirection /
+                          // cnfStyle have no ApplyParagraphLevelProperty case yet, so
+                          // they stay out to avoid spurious unsupported warnings.)
+                          or "keepNext" or "keepLines" or "pageBreakBefore" or "widowControl"
+                          or "suppressLineNumbers" or "suppressAutoHyphens" or "suppressOverlap"
+                          or "kinsoku" or "wordWrap" or "overflowPunct" or "topLinePunct"
+                          or "autoSpaceDE" or "autoSpaceDN" or "adjustRightInd" or "snapToGrid"
+                          or "mirrorIndents" or "textAlignment" or "outlineLvl" or "textboxTightWrap"
                           // BUG-DUMP-NOTE-NUMPR: a note's first paragraph can be a
                           // numbered/bulleted list item (direct <w:numPr>). Forward
                           // numId+numLevel so AddFootnote/AddEndnote
