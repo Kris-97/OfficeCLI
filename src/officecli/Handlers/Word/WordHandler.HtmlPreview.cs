@@ -549,6 +549,12 @@ public partial class WordHandler
         sb.AppendLine("  })();");
         // Auto-pagination: measure content and split overflowing pages
         sb.AppendLine($"  var maxBodyH={bodyHeightPt:0.#}*96/72;"); // pt to px (96dpi)
+        // Top margin (= padding-top of .page, the w:top reserve below which the
+        // body starts) and header distance, in px — used by adjustHeaderPadding
+        // to detect when header content is taller than the top margin and must
+        // push the body down (Word behaviour) rather than overlap it.
+        sb.AppendLine($"  var topMarginPx={pgLayout.MarginTopPt:0.#}*96/72;");
+        sb.AppendLine($"  var headerDistPx={pgLayout.HeaderDistancePt:0.#}*96/72;");
         sb.AppendLine("  var ftpl=" + JsStringLiteral(footerTemplate) + ";");
         // Header template cloned per paginated page. Continuation pages (2+)
         // never carry the first-page (titlePg) header — use the section's
@@ -616,7 +622,42 @@ public partial class WordHandler
     var pos=getComputedStyle(el).position;
     return pos==='absolute'||pos==='fixed';
   }
+  // Tall-header reflow: Word pushes the body down when the header content is
+  // taller than the top margin lets it sit above the body. Our .doc-header is
+  // position:absolute (R47, so a full-bleed cover banner can paint behind the
+  // body without reserving space), which means normal-flow header content
+  // (logo + title, an address block) overlaps the body's first paragraph when
+  // it exceeds the top margin. Measure each header's REQUIRED bottom from its
+  // own in-flow children only — full-page background / watermark layers inside
+  // the header are position:absolute (isOutOfFlow) and report ~page-height, so
+  // counting them would push every body to page 2. The full-bleed cover stays
+  // behind the body (no push), exactly the R47 design. When the in-flow header
+  // bottom exceeds the page's current top padding, grow the page's padding-top
+  // so the flex .page-body starts below the header. Idempotent: re-derives the
+  // needed padding from the header geometry each call (base = topMarginPx).
+  function adjustHeaderPadding(page){
+    var hdr=page.querySelector('.doc-header');
+    if(!hdr)return;
+    // hdr is absolute at top:headerDistPx; its in-flow content bottom relative
+    // to the page top = headerDistPx + (max in-flow child bottom within hdr).
+    var hdrTop=hdr.offsetTop; // == headerDistPx (absolute top within .page)
+    var contentBottom=0;
+    Array.from(hdr.children).forEach(function(c){
+      if(isOutOfFlow(c))return; // skip full-page bg / watermark layers
+      var b=c.offsetTop+c.offsetHeight; // relative to hdr's padding box
+      if(b>contentBottom)contentBottom=b;
+    });
+    if(contentBottom<=0)return;
+    // Small bottom gap so body doesn't butt against the header's last line.
+    var needed=hdrTop+contentBottom+(headerDistPx*0.5);
+    var base=topMarginPx;
+    var pad=needed>base?needed:base;
+    page.style.paddingTop=pad+'px';
+  }
   function paginate(){
+    // Reflow tall headers BEFORE measuring body overflow so the pushed-down
+    // body height is accounted for when picking split points.
+    document.querySelectorAll('.page').forEach(adjustHeaderPadding);
     var pages=document.querySelectorAll('.page');
     // Sync mode + page filter: bail once pages beyond max-requested exist
     // and pages 1..maxReq are stable. Avoids paginating 100-page docs to
@@ -924,6 +965,9 @@ public partial class WordHandler
       });
       if(ch>maxBodyH-fh+2 && visibleCount>1){again=true;break;}
     }
+    // Pages created in this (terminal, non-recursing) pass still need their
+    // cloned header reflowed — adjustHeaderPadding is idempotent.
+    if(!again)document.querySelectorAll('.page').forEach(adjustHeaderPadding);
     if(again){if(window._wpSync)paginate();else setTimeout(paginate,0);}
     else if(window._wpSync){
       positionFootnotes();wrapFloats();applyLineNumbers();
@@ -1188,6 +1232,7 @@ public partial class WordHandler
       // the full paginate pass. Other single pages go through paginate and flush
       // at its sync completion. flushScreenshotPage clips + drops the chrome.
       document.querySelectorAll('.page-wrapper:not(:first-of-type)').forEach(function(w){w.style.display='none';});
+      var _p1=document.querySelector('.page');if(_p1)adjustHeaderPadding(_p1);
       positionFootnotes();wrapFloats();applyLineNumbers();
       flushScreenshotPage();
     }else{paginate();}
