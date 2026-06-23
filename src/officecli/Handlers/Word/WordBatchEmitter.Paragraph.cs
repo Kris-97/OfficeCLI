@@ -2938,6 +2938,19 @@ public static partial class WordBatchEmitter
                     ctx?.Warnings.Add(new DocxUnsupportedWarning(
                         "picture", run.Path,
                         "SVG vector layer (svgBlip) dropped on round-trip; PNG raster fallback preserved"));
+                // BUG-DUMP-H82: StripRelReferencingBlipExts drops ANY <a:ext> that
+                // references a relationship, not only the SVG companion — most
+                // notably the Office 2010 artistic-effect extension
+                // (<a14:imgProps><a14:imgLayer r:embed=…><a14:imgEffect>…) whose
+                // r:embed points at a `.wdp` (HD Photo) backing layer. That drop was
+                // silent (the svgBlip warning above didn't match), losing the
+                // editable effect + its .wdp source with no signal. Warn for any
+                // rel-referencing ext drop that ISN'T the already-warned svgBlip,
+                // mirroring the drop-but-warn model for lossy media extensions.
+                else if (BlipHasRelReferencingExt(picXml))
+                    ctx?.Warnings.Add(new DocxUnsupportedWarning(
+                        "picture", run.Path,
+                        "image effect layer (e.g. Office artistic effect / HD-photo .wdp backing layer) dropped on round-trip; raster image preserved"));
                 var spEffectLst = CapturePicSpPrEffectLst(picXml);
                 if (!string.IsNullOrEmpty(spEffectLst))
                     picProps["spEffects"] = spEffectLst!;
@@ -3287,6 +3300,27 @@ public static partial class WordBatchEmitter
     // aborts and the image is lost. Drop any <a:ext> block that references a
     // relationship (r:embed / r:link / r:id); the raster fallback still renders.
     // Exts with no relationship reference (e.g. a14:useLocalDpi) are kept.
+    // BUG-DUMP-H82: true when the picture's first <a:blip> carries an <a:ext>
+    // that references a relationship (r:embed/r:link/r:id) — i.e. an extension
+    // that StripRelReferencingBlipExts will drop. Used to warn on the non-svgBlip
+    // drops (Office 2010 artistic effects + their .wdp backing layer) that were
+    // previously stripped silently. Scoped to the <a:blip> inner so the main
+    // r:embed attribute on <a:blip> (carried through by AddPicture) is not counted.
+    private static bool BlipHasRelReferencingExt(string picXml)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(
+            picXml, @"<a:blip\b[^>]*?>(.*?)</a:blip>",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+        if (!m.Success) return false;
+        foreach (System.Text.RegularExpressions.Match ext in
+                 System.Text.RegularExpressions.Regex.Matches(
+                     m.Groups[1].Value, @"<a:ext\b[^>]*>.*?</a:ext>",
+                     System.Text.RegularExpressions.RegexOptions.Singleline))
+            if (System.Text.RegularExpressions.Regex.IsMatch(ext.Value, @"\br:(embed|link|id)\s*="))
+                return true;
+        return false;
+    }
+
     private static string StripRelReferencingBlipExts(string blipInner)
     {
         if (string.IsNullOrEmpty(blipInner)
