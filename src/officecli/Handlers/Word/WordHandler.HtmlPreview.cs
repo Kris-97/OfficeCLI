@@ -41,6 +41,20 @@ public partial class WordHandler
         // null → fall back to MainDocumentPart (body path).
         public DocumentFormat.OpenXml.Packaging.OpenXmlPart? ImageHostPart { get; set; }
 
+        // Table-style run properties (base rPr + matching conditional-format
+        // rPr) for the cell currently being rendered, ordered lowest→highest
+        // priority. Per ECMA-376 §17.7.2 the run-property cascade is:
+        // docDefaults → table styles → paragraph styles → … → run direct.
+        // ResolveEffectiveRunPropertiesCore merges these layers in just after
+        // docDefaults so a firstRow/band cell's <w:caps/> + white <w:color/>
+        // reach the run (otherwise the run inherits only docDefaults color,
+        // e.g. the Invoice "PAYMENT OPTIONS" header rendering lowercase grey).
+        // null/empty → not inside a styled-table cell (body path). Saved and
+        // restored around RenderCellChild like ImageHostPart. Each layer is an
+        // rPr-shaped element (a style's <w:rPr> / a tblStylePr's <w:rPr>) merged
+        // as a source via MergeRunProperties.
+        public List<DocumentFormat.OpenXml.OpenXmlElement>? CurrentCellTableStyleRunProps { get; set; }
+
         // CJK line-break tracking: accumulate character widths and insert <br> at Word-compatible positions
         public double LineWidthPt { get; set; }      // available width for current line
         public double LineAccumPt { get; set; }       // accumulated width on current line

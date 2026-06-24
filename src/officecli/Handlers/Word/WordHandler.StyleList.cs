@@ -42,6 +42,22 @@ public partial class WordHandler
         if (defaultRPr != null)
             MergeRunProperties(effective, defaultRPr, "/docDefaults", sources);
 
+        // 1b. Table-style run properties (base rPr + matching conditional-format
+        // rPr) for the cell the run lives in. Per ECMA-376 §17.7.2 the run-
+        // property cascade places table styles directly above docDefaults and
+        // below paragraph/character styles, so merge the layers (lowest→highest
+        // priority, already ordered by the renderer) here. The HTML renderer
+        // stashes them on _ctx around RenderCellChild; null/empty on the body
+        // path. Without this a firstRow/band cell's <w:caps/> + white <w:color/>
+        // never reach the run and it falls back to docDefaults (e.g. the Invoice
+        // "PAYMENT OPTIONS" header rendered lowercase grey instead of white caps).
+        var cellTableStyleRPr = _ctx?.CurrentCellTableStyleRunProps;
+        if (cellTableStyleRPr != null)
+        {
+            foreach (var layerRPr in cellTableStyleRPr)
+                MergeRunProperties(effective, layerRPr, "/tableStyle", sources);
+        }
+
         // 2. Walk paragraph style basedOn chain (collect in order, apply from base to derived)
         var styleId = para.ParagraphProperties?.ParagraphStyleId?.Val?.Value;
         // OOXML §17.7.4.17: a paragraph without an explicit <w:pStyle>

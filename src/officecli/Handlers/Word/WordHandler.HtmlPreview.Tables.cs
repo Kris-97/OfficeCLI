@@ -54,6 +54,13 @@ public partial class WordHandler
         // Resolve conditional formatting from table style
         var condFormats = styleId != null ? ResolveTableStyleConditionalFormats(styleId) : null;
 
+        // Resolve the table-style base run properties (<w:style><w:rPr>) — the
+        // whole-table run formatting (e.g. white caps text). Per-cell these are
+        // merged into the run cascade just above docDefaults, with the matching
+        // conditional-format (firstRow/band…) rPr layered on top. See
+        // ResolveEffectiveRunPropertiesCore step 1b.
+        var tableStyleBaseRunProps = styleId != null ? ResolveTableStyleBaseRunProps(styleId) : null;
+
         // Resolve the table-style base cell shading (<w:style><w:tcPr><w:shd>) —
         // the whole-table cell fill. Used as the lowest-priority cell background
         // fallback so a dark-list table's blue fill shows behind its white run
@@ -623,9 +630,31 @@ public partial class WordHandler
                     }
                 }
 
+                // Assemble this cell's table-style run-property layers (base rPr
+                // then matching conditional-format rPr, lowest→highest priority —
+                // condTypes is already ordered band → firstCol/lastCol →
+                // firstRow/lastRow) and stash them on _ctx so the run cascade
+                // (ResolveEffectiveRunPropertiesCore step 1b) picks up white-caps
+                // / band run formatting. Saved/restored like ImageHostPart.
+                List<OpenXmlElement>? cellRunPropLayers = null;
+                if (tableStyleBaseRunProps != null)
+                    (cellRunPropLayers = new List<OpenXmlElement>()).AddRange(tableStyleBaseRunProps);
+                if (condFormats != null)
+                {
+                    foreach (var ct in condTypes)
+                    {
+                        if (condFormats.TryGetValue(ct, out var cf) && cf.RunProperties != null)
+                            (cellRunPropLayers ??= new List<OpenXmlElement>()).Add(cf.RunProperties);
+                    }
+                }
+                var savedCellRunProps = _ctx.CurrentCellTableStyleRunProps;
+                _ctx.CurrentCellTableStyleRunProps = cellRunPropLayers;
+
                 foreach (var child in cell.ChildElements)
                     RenderCellChild(child);
                 CloseCellList();
+
+                _ctx.CurrentCellTableStyleRunProps = savedCellRunProps;
 
                 if (exactWrap) sb.Append("</div>");
                 sb.AppendLine($"</{tag}>");
@@ -722,6 +751,39 @@ public partial class WordHandler
             currentId = style.BasedOn?.Val?.Value;
         }
         return null;
+    }
+
+    /// <summary>Resolve the table-style base run properties
+    /// (&lt;w:style&gt;&lt;w:rPr&gt;) walking the basedOn chain, returned
+    /// base→derived (lowest→highest priority) as a layer list. This is the
+    /// whole-table run formatting (e.g. the Invoice table's base rPr that writes
+    /// white caps text). It sits below the per-cell conditional-format
+    /// (tblStylePr) rPr and below paragraph/character styles in the cascade —
+    /// see ResolveEffectiveRunPropertiesCore step 1b. The caller appends the
+    /// matching tblStylePr conditional rPr after these so the band wins.</summary>
+    private List<OpenXmlElement>? ResolveTableStyleBaseRunProps(string styleId)
+    {
+        // Collect the basedOn chain (derived→base), then return base→derived.
+        var visited = new HashSet<string>();
+        var chain = new List<Style>();
+        var currentId = styleId;
+        while (currentId != null && visited.Add(currentId))
+        {
+            var style = FindStyleById(currentId);
+            if (style == null) break;
+            chain.Add(style);
+            currentId = style.BasedOn?.Val?.Value;
+        }
+        chain.Reverse(); // base first
+
+        List<OpenXmlElement>? layers = null;
+        foreach (var style in chain)
+        {
+            var rPr = style.StyleRunProperties;
+            if (rPr == null) continue;
+            (layers ??= new List<OpenXmlElement>()).Add(rPr);
+        }
+        return layers;
     }
 
     // ==================== Table Look / Conditional Formatting ====================
