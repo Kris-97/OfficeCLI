@@ -62,7 +62,7 @@ Every model in this skill builds on three zones. **Name them, tab-color them, an
 **Executable zone audit** (run before Gate 4):
 
 ```bash
-# Calc zone: zero numeric hardcodes allowed. NOTE: the `:not(:has(formula))` pseudo returns the WRONG set (it surfaces the formula cells, not the literals) — filter via jq on .format.formula == null instead.
+# Calc zone: zero numeric hardcodes allowed. `cell:not(:has(formula))` selects the literal (non-formula) cells; `cell:has(formula)` selects the formula cells.
 HARDCODE=$(officecli query "$FILE" 'cell[type=Number]' --json | jq '[.data.results[] | select(.format.formula == null) | select(.path | test("/(P&L|Balance Sheet|Cash Flow|DCF|Debt|ARR)/"))] | length')
 [ "$HARDCODE" -eq 0 ] && echo "Zone audit OK" || { echo "REJECT: $HARDCODE hardcoded numeric cells on Calc sheets — move to Assumptions"; exit 1; }
 # Assumptions zone: should be non-zero.
@@ -494,7 +494,7 @@ For LBO, extend the list: `/Exit/B5`, `/Returns/B3`, `/Returns/B4`. For 3-statem
 Every Calc sheet has zero numeric hardcodes. Executable:
 
 ```bash
-# `:not(:has(formula))` returns the wrong set (surfaces formula cells) — filter on .format.formula == null via jq instead.
+# `cell:not(:has(formula))` selects the literal cells (and `cell:has(formula)` the formula cells).
 HARDCODE=$(officecli query "$FILE" 'cell[type=Number]' --json \
   | jq '[.data.results[] | select(.format.formula == null) | select(.path | test("/(P&L|Balance Sheet|Cash Flow|DCF|Debt|FCF|WACC|Exit|Returns)/"))] | length')
 [ "$HARDCODE" -eq 0 ] && echo "Gate 6 OK (no hardcodes on Calc sheets)" || { echo "REJECT Gate 6: $HARDCODE hardcoded numeric cells on Calc zone — move to Assumptions"; exit 1; }

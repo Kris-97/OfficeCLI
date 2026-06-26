@@ -235,7 +235,7 @@ If the body prose contains raw `lambda_1`, `x_{t+1}`, `\alpha` or similar plain-
 **LaTeX subset pitfalls** (non-negotiable):
 
 1. `\left(...\right)` / `\left[...\right]` with a sub/superscript **inside** the delimiters → parse error (`Error: cast object … Subscript`). An OUTER script (`\left(x+y\right)^2`) is fine; plain `(`, `)`, `[`, `]` always work and OMML auto-sizes them in display mode.
-2. `move` on `/body/oMathPara[N]` does not reliably reposition — `--index` silently no-ops; `--before <path>` works but can leave a stray empty paragraph. Workaround: `add` at the target position, then `remove` the original.
+2. `move` on `/body/oMathPara[N]` reorders the display equation (it repositions the wrapping paragraph). `--before <path>` may leave a stray empty paragraph; prefer `--index` or `--after` for a clean reorder.
 
 **Equation numbering** — no native `\eqno`. The journal-standard layout is **one line**: equation centered, number flush-right at the column edge (`Y = A(X) ⊗ X      (1)`). Build it with two paragraph **tab stops** — a `center` tab at the column mid-point and a `right` tab at the column right edge — then lay out `[tab] equation(inline) [tab] (1)` in a single paragraph. Do NOT use a centered display equation followed by a separate right-aligned `(1)` line — that splits the number onto its own line and is the most common reason agents fail to reproduce the expected look.
 
@@ -369,7 +369,7 @@ officecli add "$FILE" /body --type paragraph --prop text="Abstract" --prop align
 officecli add "$FILE" /body --type paragraph --prop text="We present an attention-based model for detecting anomalies in industrial sensor time series..." --prop size=10pt --prop lineSpacing=1.15x --prop spaceAfter=12pt
 
 # 3. Section break + two-column from here on
-#    CRITICAL: `/section[last()]` does not resolve (not_found) — the last()/index axis is not supported on the section path. Count sections first, use an explicit /section[N].
+#    `/section[last()]` resolves to the final section (like p[last()]); an explicit /section[N] also works.
 officecli add "$FILE" /body --type section --prop type=continuous
 SECTION_COUNT=$(officecli query "$FILE" section --json | jq '.data.results | length')
 # After the add, SECTION_COUNT should be 2 — [1] is pre-break, [2] is post-break (2-col body area).
@@ -382,7 +382,7 @@ officecli add "$FILE" /body --type paragraph --prop text="Industrial anomaly det
 # 5. At the end of 2-column body, ANOTHER section break + revert to single column for references / appendices
 # (If you want references in 2-col too, skip step 5 — but most IEEE papers use 2-col for references as well.)
 # officecli add "$FILE" /body --type section --prop type=continuous
-# Then re-count and use the new explicit /section[N], NOT /section[last()]:
+# Use /section[last()] for the final section, or re-count for an explicit /section[N]:
 # officecli set "$FILE" "/section[3]" --prop columns=1
 
 # 6. Footer, close, validate
@@ -482,12 +482,12 @@ Report every instance. If even one defect is present → REJECT; do not deliver 
 Academic-specific:
 
 - **`\left(...\right)` / `\left[...\right]` with a sub/superscript INSIDE the delimiters → parse error** (`cast object … Subscript`). An outer script (`\left(x+y\right)^2`) is fine. Use plain `(`, `)`, `[`, `]` — OMML auto-sizes in display mode.
-- **`move` on `/body/oMathPara[N]` not reliable.** `--index` silently no-ops; `--before <path>` repositions but can leave a stray empty paragraph. Workaround: `add` at the target position, `remove` the original.
+- **`move` on `/body/oMathPara[N]` reorders the equation** (the wrapping paragraph moves). `--before <path>` may leave a stray empty paragraph; prefer `--index` / `--after`.
 - **Section break +1 paragraph offset.** Each `add /body --type section` inserts one empty paragraph into `/body`. All `p[N]` indices after the break shift by +1. Plan breaks; after any `add section`, `officecli get "$FILE" /body --depth 1` to re-index.
-- **`/section[last()]` does not resolve** (`not_found` — the last()/index axis is unsupported on the section path; `p[last()]` works, section does not). Always resolve to an explicit `/section[N]`:
+- **`/section[last()]` resolves to the final section** (mirrors `p[last()]`), for both get and set. An explicit `/section[N]` also works:
   ```bash
   SECTION_COUNT=$(officecli query "$FILE" section --json | jq '.data.results | length')
-  # then use /section[2], /section[3], ..., NEVER /section[last()]
+  # use /section[last()] for the final section, or an explicit /section[2], /section[3], ...
   ```
   Each `add /body --type section` increments the count. Re-query after every break.
 - **Multi-column does NOT auto-revert.** After a `columns=2` section, you must add another section break and explicitly set `columns=1` on the new `/section[N]` (N = post-revert count) — otherwise the rest of the document, including references, renders as two columns. Verify with `officecli get "$FILE" "/section[N]"` for each N.

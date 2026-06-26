@@ -580,7 +580,7 @@ officecli set "$FILE" / --prop protection=forms
 ```
 
 - Escape inner `"` in `xml` with `\"`. Use single-quoted heredoc `<<'EOF'` so `$var` does not expand.
-- **P0 batch trap:** unsupported props in batch are silently dropped, **no WARNING** (interactive `add` would print WARNING: UNSUPPORTED, exit 2). Defence: send only `{type, tag, alias, text}` in SDT entries; put items/format into `raw-set` entries in the same batch.
+- **P0 batch trap:** genuinely-unsupported props in batch are silently dropped, **no WARNING** (interactive `add` would print WARNING: UNSUPPORTED, exit 2). Defence: send only props `help docx sdt` lists (`type/tag/alias/text/items/format/lock/...` are fine on `add`; `maxlength` is not), and verify with a readback after the batch.
 - `batch` supports `add`, `set`, `get`, `query`, `remove`, `validate`, `raw-set`.
 
 ## Delivery Gate (executable)

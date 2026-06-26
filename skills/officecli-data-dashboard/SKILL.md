@@ -198,7 +198,7 @@ Four CF rule types; each uses `--type <shorthand>` at `add` time:
 | Magnitude bar (sales, spend) | `databar` | `sqref=B2:B13 color=4472C4` — explicit `min=0 max=<plausible>` recommended for predictable scaling, but omitting them is valid (defaults to data min/max) |
 | Heat map (rates, growth) | `colorscale` | `sqref=D2:D13 mincolor=FFCDD2 midcolor=FFFFFF maxcolor=C8E6C9` |
 | Status indicator | `iconset` | `sqref=E2:E13 iconset=3Arrows` — see help for the full enum |
-| Custom business rule | `formulacf` | `sqref=B2:B13 'formula=$B2>=100000' fill=C8E6C9 font.color=2E7D32` — skip `font.bold` (accepted but silently dropped; CF cannot bold) |
+| Custom business rule | `formulacf` | `sqref=B2:B13 'formula=$B2>=100000' fill=C8E6C9 font.color=2E7D32` — `font.bold` works on CF too |
 
 Semantic colors to stay consistent within a dashboard:
 
@@ -388,7 +388,7 @@ Scatter charts do not accept `series1.xValues` (UNSUPPORTED) — feed the x-axis
 | D-1 | `combosplit` is a DeferredAddKey — works on `add` only. (`preset`, `referenceline`, `trendline`, `axisNumFmt` now apply on `set` too — help shows `[add/set]`.) | Set `combosplit` at `add` time; cannot apply after the fact — remove + re-add. The other four can be applied or changed post-creation via `set`. |
 | D-2 | `referenceline` format is `value:color:label:dash` (color BEFORE label). `"0:Break-Even:FF0000:dash"` fails `Invalid color value`. | Order is value, color, label, dash. |
 | D-3 | Scatter charts do NOT accept `series1.xValues` (UNSUPPORTED). Feed the x-axis through `categories` / `series1.categories`. | `--prop series1.categories="Sheet1!A2:A13"` (or `--prop categories="Sheet1!A2:A13"`) |
-| D-4 | `formulacf` accepts `font.bold` but silently drops it (dxf/font CF path emits no `<b>`) — the rule applies with no bold. | Don't rely on `font.bold` via CF; use `fill` + `font.color` to signal. Bold is not achievable through CF. |
+| D-4 | `formulacf` honors `font.bold` / `font.italic` (written to the dxf font and surfaced on readback), alongside `fill` and `font.color`. | Use any of `fill` / `font.color` / `font.bold` / `font.italic` to signal a CF rule. |
 | D-5 | Dashboard column widths default to 8.43 — KPI values at 24pt bold show `###` | Size by cachedValue bracket: 4–6 digits → 22–24; 7–9 digits (million) → 26–30; 10+ digits (亿 / billion) → 32–36; 百亿 / 10-digit + currency symbol + fit-to-page landscape → **40–44**. Formula `ceil((visible_chars+2)*1.3)` is a starting point; always verify via Gate 7 fallback b). Sparkline columns: 12. |
 | D-6 | `raw-set activeTab` must be the LAST mutation. Inserting before all sheets exist shifts indices. | Finish all sheets / charts / CF / sparklines / tabColors, then `raw-set`. |
 | D-7 | `calc.fullCalcOnLoad` via `raw-set` creates duplicate `<calcPr>` → validate fails | Use `officecli set "$FILE" / --prop calc.fullCalcOnLoad=true`. |
@@ -396,7 +396,7 @@ Scatter charts do not accept `series1.xValues` (UNSUPPORTED) — feed the x-axis
 | D-9 | `chartType=pie` blank-renders in LibreOffice | Use `doughnut` as the safe substitute for part-of-whole breakdowns. |
 | D-10 | `SUMIFS` / `AVERAGEIFS` with date criteria fails silently if the criterion is a string | Wrap with `DATE()` or `DATEVALUE()`: `=SUMIFS(B2:B13,A2:A13,DATE(2025,1,5))`. |
 | D-11 | Summary sheet percentage formulas display as raw decimals (0.098) without `numFmt` | Set `numFmt="0.0%"` at the same `set` call as the formula. |
-| D-12 | `import --header` sets freeze + AutoFilter but does NOT set column widths. | Set widths on `col[]`. Do NOT set `numFmt` on a `col[]` path: `set /Sheet1/col[A] --prop numFmt=...` is accepted and reads back, but writes a schema-invalid `numFmt` attribute on `<x:col>` that fails `validate`. Apply `numFmt` per cell range (`A2:A13`) instead. |
+| D-12 | `import --header` sets freeze + AutoFilter but does NOT set column widths. | Set widths on `col[]`. `numFmt` on a `col[]` path now applies a column-level style (`<col s=...>`, schema-valid, reads back as `numberformat`); it formats blank cells in the column. Cells with their own style still need a per-cell-range `numFmt`. |
 | D-13 | Sparkline `highpoint` is a bool (highlight on/off), not a color. `--prop highpoint=FF0000` errors `Invalid boolean value` | `--prop highPoint=true --prop highMarkerColor=FF0000`. Same pattern for lowPoint / firstPoint / lastPoint and their *MarkerColor. |
 | D-14 | Sparkline cross-sectional data is meaningless (a region or department has no ordering) | Skip sparklines unless rows are a sequential time-series (dates, months, quarters). |
 | D-15 | Empty chart `add` is rejected (`Chart requires a 'data' property`) at the CLI layer — legacy skills that relied on silent accept will fail here | Always provide `series1.values=` / `dataRange=` / inline `data=` at chart `add` time. Treat Gate 2 seriesCount check as a belt-and-braces verification. |

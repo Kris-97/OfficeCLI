@@ -287,7 +287,7 @@ The 10 slides every pitch deck carries. Each recipe below gives: **visual outcom
 
 **Long-title wrap rule.** A 36pt+ title that wraps to 2 lines: add `height` (e.g. 2cm → 3.5cm) — never drop the font below 36pt. Titles < 36pt on a pitch deck read as timid regardless of content.
 
-> **Chart `series1.color=` exit-2 gotcha (applies to every chart recipe below — Market / Traction / Financials / Ask).** Passing `--prop series1.color=` (or `series2.color=`, …) on chart `add` prints `UNSUPPORTED props: series1.color` and returns **exit 2**, even though the color **is** applied correctly (series colors formally live in the chart-series schema, not the chart `add` schema). Under `set -e` (Delivery Gate) this non-zero exit will abort the script. Guard the chart-add (e.g. append `|| true`) or set the series color in a follow-up step, and verify with a readback (`officecli query "$FILE" "/slide[N]/chart[1]/series[1]" --json | jq .format.color`). Do NOT drop `series1.color=` — it works; only the exit code is misleading.
+> **Chart `series1.color=` on `add` works** (applies to every chart recipe below). Passing `--prop series1.color=` (or `series2.color=`, …) on chart `add` applies the series color and exits 0. Verify with a readback if you like: `officecli query "$FILE" "/slide[N]/chart[1]/series[1]" --json | jq .format.color`.
 
 ### (1) Cover slide — company · tagline · round · date
 
