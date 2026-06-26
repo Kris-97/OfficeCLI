@@ -95,6 +95,7 @@ internal class BatchItemConverter : JsonConverter<BatchItem>
                 case "after": item.After = reader.GetString(); break;
                 case "before": item.Before = reader.GetString(); break;
                 case "to": item.To = reader.GetString(); break;
+                case "path2": item.Path2 = reader.GetString(); break;
                 case "props": item.Props = PropsConverter.Read(ref reader, typeof(Dictionary<string, string>), options); break;
                 case "selector": item.Selector = reader.GetString(); break;
                 case "text": item.Text = reader.GetString(); break;
@@ -122,6 +123,7 @@ internal class BatchItemConverter : JsonConverter<BatchItem>
         if (value.After != null) writer.WriteString("after", value.After);
         if (value.Before != null) writer.WriteString("before", value.Before);
         if (value.To != null) writer.WriteString("to", value.To);
+        if (value.Path2 != null) writer.WriteString("path2", value.Path2);
         if (value.Props != null) { writer.WritePropertyName("props"); PropsConverter.Write(writer, value.Props, options); }
         if (value.Selector != null) writer.WriteString("selector", value.Selector);
         if (value.Text != null) writer.WriteString("text", value.Text);
@@ -147,6 +149,11 @@ public class BatchItem
     public string? After { get; set; }
     public string? Before { get; set; }
     public string? To { get; set; }
+    // swap's second element. Canonical name across the single-command MCP tool
+    // and the CLI (`swap path1 path2`); a batch swap that reused that name was
+    // previously dropped (BatchItem had no path2), so swap only worked via the
+    // off-name `to`. Accept both — see the swap case in ExecuteBatchItem.
+    public string? Path2 { get; set; }
     public Dictionary<string, string>? Props { get; set; }
     public string? Selector { get; set; }
     public string? Text { get; set; }
@@ -159,7 +166,7 @@ public class BatchItem
 
     internal static readonly HashSet<string> KnownFields = new(StringComparer.OrdinalIgnoreCase)
     {
-        "command", "op", "path", "parent", "type", "from", "index", "after", "before", "to",
+        "command", "op", "path", "parent", "type", "from", "index", "after", "before", "to", "path2",
         "props", "selector", "text", "mode", "depth", "part", "xpath", "action", "xml"
     };
 
@@ -175,6 +182,7 @@ public class BatchItem
         if (After != null) req.Args["after"] = After;
         if (Before != null) req.Args["before"] = Before;
         if (To != null) req.Args["to"] = To;
+        if (Path2 != null) req.Args["path2"] = Path2;
         if (Selector != null) req.Args["selector"] = Selector;
         if (Text != null) req.Args["text"] = Text;
         if (Mode != null) req.Args["mode"] = Mode;

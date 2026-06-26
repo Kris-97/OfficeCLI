@@ -465,6 +465,26 @@ static partial class CommandBuilder
         }
     }
 
+    /// <summary>
+    /// Remove a path, honouring a prop-carried <c>shift</c> (Excel cell delete
+    /// with shift=left|up). The CLI exposes shift via a dedicated --shift option
+    /// that routes to <c>RemoveCellWithShift</c>; the MCP single-command and
+    /// batch surfaces carry it inside props, so without this they silently
+    /// dropped it (plain <c>Remove</c> ignores props["shift"]). Shared so all
+    /// three surfaces behave identically. Returns the handler's warning (or null).
+    /// </summary>
+    internal static string? RemoveWithShiftSupport(OfficeCli.Core.IDocumentHandler handler, string path, Dictionary<string, string>? props)
+    {
+        if (props != null && props.TryGetValue("shift", out var shift) && !string.IsNullOrEmpty(shift))
+        {
+            if (handler is not OfficeCli.Handlers.ExcelHandler xl)
+                throw new OfficeCli.Core.CliException("shift is supported only for Excel cell paths (e.g. /Sheet1/B5).")
+                    { Code = "invalid_value" };
+            return xl.RemoveCellWithShift(path, shift);
+        }
+        return handler.Remove(path, props);
+    }
+
     internal static string ExecuteBatchItem(OfficeCli.Core.IDocumentHandler handler, BatchItem item, bool json)
     {
         var format = json ? OfficeCli.Core.OutputFormat.Json : OfficeCli.Core.OutputFormat.Text;
@@ -656,7 +676,7 @@ static partial class CommandBuilder
                     throw new ArgumentException("'remove' command requires 'path' field. Example: {\"command\": \"remove\", \"path\": \"/slide[1]/shape[2]\"}");
                 var path = item.Path;
                 OfficeCli.Core.MutationSelectorGuard.EnsureScoped(path, "remove");
-                var warning = handler.Remove(path, item.Props);
+                var warning = RemoveWithShiftSupport(handler, path, item.Props);
                 var msg = $"Removed {path}";
                 if (warning != null) msg += $"\n{warning}";
                 return msg;
@@ -673,13 +693,19 @@ static partial class CommandBuilder
             }
             case "swap":
             {
-                if (string.IsNullOrEmpty(item.Path) || string.IsNullOrEmpty(item.To))
-                    throw new ArgumentException("'swap' command requires 'path' and 'to' fields. Example: {\"command\": \"swap\", \"path\": \"/slide[1]\", \"to\": \"/slide[2]\"}");
+                // Second element: accept `path2` (canonical — the single-command
+                // MCP tool and the CLI `swap path1 path2` both use it) or the
+                // legacy `to`. Before path2 was carried, an agent that learned
+                // swap from the single command produced a batch item that
+                // silently failed the path-presence check below.
+                var swapTo = !string.IsNullOrEmpty(item.Path2) ? item.Path2 : item.To;
+                if (string.IsNullOrEmpty(item.Path) || string.IsNullOrEmpty(swapTo))
+                    throw new ArgumentException("'swap' command requires 'path' and 'path2' (or 'to') fields. Example: {\"command\": \"swap\", \"path\": \"/slide[1]\", \"path2\": \"/slide[2]\"}");
                 var (p1, p2) = handler switch
                 {
-                    OfficeCli.Handlers.PowerPointHandler ppt => ppt.Swap(item.Path, item.To),
-                    OfficeCli.Handlers.WordHandler word => word.Swap(item.Path, item.To),
-                    OfficeCli.Handlers.ExcelHandler excel => excel.Swap(item.Path, item.To),
+                    OfficeCli.Handlers.PowerPointHandler ppt => ppt.Swap(item.Path, swapTo),
+                    OfficeCli.Handlers.WordHandler word => word.Swap(item.Path, swapTo),
+                    OfficeCli.Handlers.ExcelHandler excel => excel.Swap(item.Path, swapTo),
                     _ => throw new InvalidOperationException("swap not supported for this document type")
                 };
                 return $"Swapped {p1} <-> {p2}";

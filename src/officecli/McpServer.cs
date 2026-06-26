@@ -562,10 +562,15 @@ public static class McpServer
             {
                 var file = Arg("file");
                 var path = Arg("path");
+                // Forward props so remove options reach the handler (e.g.
+                // shift=left|up for an Excel cell delete). The CLI `remove`
+                // (--shift) and batch remove already pass these; without it the
+                // MCP single-command remove silently could not express them.
+                var props = ParseProps(ArgStringArray("props"));
                 OfficeCli.Core.MutationSelectorGuard.EnsureScoped(path, "remove");
                 using var handler = DocumentHandlerFactory.Open(file, editable: true);
-                handler.Remove(path);
-                return $"Removed {path}";
+                var warning = CommandBuilder.RemoveWithShiftSupport(handler, path, props.Count > 0 ? props : null);
+                return warning != null ? $"Removed {path}\n{warning}" : $"Removed {path}";
             }
             case "move":
             {
