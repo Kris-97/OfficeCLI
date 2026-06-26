@@ -172,6 +172,8 @@ function sendOnce(sockPath, line, connectTimeoutMs) {
 function decodeLine(raw) {
   let text = raw.toString('utf8');
   if (text.charCodeAt(0) === 0xfeff) text = text.slice(1); // strip UTF-8 BOM (unix StreamWriter)
+  if (text.charCodeAt(text.length - 1) === 0x0a) text = text.slice(0, -1); // drop the '\n' terminator
+  if (text.charCodeAt(text.length - 1) === 0x0d) text = text.slice(0, -1); // and a trailing '\r'
   return text;
 }
 
@@ -376,8 +378,32 @@ async function ensureCliBinary(binary, autoInstall) {
   return binary;
 }
 
+// Quote one token for a cmd.exe command line: wrap in double quotes when it
+// holds whitespace or a cmd metacharacter, doubling any embedded quote. Plain
+// tokens pass through unquoted. (Windows filenames can't contain '"', so the
+// escape is just defensive.)
+function quoteForCmd(s) {
+  if (s === '') return '""';
+  return /[\s&|<>^()"]/.test(s) ? `"${String(s).replace(/"/g, '""')}"` : String(s);
+}
+
 function runCli(binary, argv) {
-  const r = spawnSync(binary, argv, { encoding: 'utf8' });
+  let cmd = binary;
+  let args = argv;
+  const opts = { encoding: 'utf8' };
+  if (IS_WIN && /\.(cmd|bat)$/i.test(binary)) {
+    // Node refuses to spawn a .cmd/.bat directly without a shell since
+    // CVE-2024-27980 (raises EINVAL). Run it through cmd.exe ourselves,
+    // quoting each token so paths with spaces survive — shell:true would
+    // join the args unquoted and break on the first space. Mirrors Node's
+    // own shell idiom (cmd /d /s /c "<line>" + windowsVerbatimArguments)
+    // but with the per-token quoting shell:true omits.
+    const line = [binary, ...argv].map(quoteForCmd).join(' ');
+    cmd = process.env.ComSpec || 'cmd.exe';
+    args = ['/d', '/s', '/c', `"${line}"`];
+    opts.windowsVerbatimArguments = true;
+  }
+  const r = spawnSync(cmd, args, opts);
   if (r.error && r.error.code === 'ENOENT') {
     throw new OfficeCliError(127, MISSING_CLI.replace('{bin}', JSON.stringify(binary)));
   }
@@ -533,10 +559,11 @@ async function open(filePath, { binary = 'officecli', timeoutMs = 30000, autoIns
 
 /**
  * Install the officecli CLI binary via its OFFICIAL installer — explicit by
- * design (this SDK never auto-downloads behind your back). Note: when installed
+ * design (this SDK never auto-downloads behind your back). Runs install.ps1 via
+ * PowerShell on Windows and install.sh via bash elsewhere. Note: when installed
  * via npm, @officecli/officecli already bundles an auto-updating binary, so this
- * is only needed for a standalone ~/.local/bin install. Not supported on Windows
- * (install.sh needs bash) — download from GitHub Releases and put it on PATH.
+ * is only needed for a standalone (~/.local/bin or %LOCALAPPDATA%\OfficeCLI)
+ * install.
  */
 function install() {
   if (IS_WIN) {
