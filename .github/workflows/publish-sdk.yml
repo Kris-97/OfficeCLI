@@ -58,6 +58,9 @@ jobs:
         working-directory: sdk/node
         run: |
           npm pkg set name='${{ matrix.package }}'
+          # README install/require examples are written for @officecli/sdk; rewrite
+          # them to this package's name so each alias page references itself.
+          sed -i "s|@officecli/sdk|${{ matrix.package }}|g" README.md
           VERSION=$(node -p "require('./package.json').version")
           echo "Publishing candidate: ${{ matrix.package }}@$VERSION"
           if npm view "${{ matrix.package }}@$VERSION" version >/dev/null 2>&1; then
