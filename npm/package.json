@@ -1,6 +1,6 @@
 {
   "name": "@officecli/officecli",
-  "version": "1.0.122",
+  "version": "1.0.123",
   "description": "OfficeCli — CLI for reading and writing Office documents (.docx, .xlsx, .pptx) via a document DOM API. The native binary is fetched on install for your platform.",
   "license": "Apache-2.0",
   "author": "goworm",
