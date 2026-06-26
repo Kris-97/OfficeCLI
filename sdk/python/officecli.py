@@ -312,22 +312,36 @@ def _resolve_binary(binary):
     return binary                           # give up; _run_cli raises the helpful error
 
 
+def _runs_ok(binary):
+    """True iff `<binary> --version` actually runs and exits 0. Accept only a
+    WORKING officecli — skip a present-but-broken file, and don't trigger a
+    needless install when a usable officecli is already there."""
+    try:
+        return subprocess.run([binary, "--version"], capture_output=True).returncode == 0
+    except OSError:
+        return False
+
+
 def _ensure_binary(binary, auto_install=True):
-    """Resolve the binary and, if it can't be found anywhere AND auto_install is
-    set, provision it via the official installer before giving up. Parallels the
-    Node SDK's auto-install. An explicit path (with a separator) and a bare name
-    found on PATH / in the install dir are returned as-is — install only runs
-    when nothing is found. install() picks install.sh (unix) or install.ps1
-    (Windows), so auto-install works on both."""
-    resolved = _resolve_binary(binary)
-    explicit = os.sep in binary or (os.altsep and os.altsep in binary)
-    if resolved != binary or explicit:
-        return resolved              # found (or an explicit path we trust)
+    """Resolve to a WORKING officecli, provisioning one if none is found and
+    auto_install is set. An explicit path (with a separator) is trusted as-is;
+    otherwise each candidate (PATH, then the installer's known location) is
+    accepted only when `officecli --version` actually runs — so a present-but-
+    broken binary is skipped and a usable one never triggers a needless install.
+    install() picks install.sh (unix) or install.ps1 (Windows), so auto-install
+    works on both."""
+    if os.sep in binary or (os.altsep and os.altsep in binary):
+        return binary                      # explicit path: trust the caller
+    for cand in filter(None, (shutil.which(binary), _install_dir_candidate(binary))):
+        if _runs_ok(cand):
+            return cand                    # a working officecli is already here
     if auto_install:
         print("officecli CLI not found — installing from d.officecli.ai ...", file=sys.stderr)
-        install()                    # CLI absent everywhere → official installer
-        resolved = _resolve_binary(binary)
-    return resolved                  # may still be the bare name; _run_cli then raises
+        install()                          # CLI absent/unusable → official installer
+        for cand in filter(None, (shutil.which(binary), _install_dir_candidate(binary))):
+            if _runs_ok(cand):
+                return cand
+    return binary                          # give up; _run_cli raises the helpful error
 
 
 def _run_cli(binary, argv):

@@ -343,39 +343,43 @@ async function ensureCliBinary(binary, autoInstall) {
   // installer's known location; finally, if autoInstall, run the official
   // install.sh. Returns the resolved path (or the bare name, so runCli raises
   // the helpful MISSING_CLI error if everything failed).
-  if (binary.includes(path.sep) || binary.includes('/')) return binary;
+  if (binary.includes(path.sep) || binary.includes('/')) return binary; // explicit: trust caller
+
+  // Accept the first candidate that actually RUNS (`--version` exit 0), in
+  // priority order: the bundled (auto-updating) binary, then PATH, then the
+  // installer's known location. Probing — not mere file existence — means a
+  // present-but-broken binary is skipped, and a working officecli is never
+  // shadowed by a needless install.
+  const candidates = [];
   if (binary === 'officecli') {
     try {
-      const cli = require('@officecli/officecli');
-      const p = cli.binaryPath();
-      if (fs.existsSync(p)) return p;
-      if (autoInstall) {
-        process.stderr.write('[officecli] CLI not found — installing from d.officecli.ai …\n');
-        await cli.ensureBinary(); // download the vendored, auto-updating binary
-        return cli.binaryPath();
-      }
-    } catch (_) {
-      /* dependency absent — fall through to PATH/install-dir/install.sh */
-    }
+      const p = require('@officecli/officecli').binaryPath();
+      if (fs.existsSync(p)) candidates.push(p);
+    } catch (_) { /* dependency absent */ }
   }
-  const found = whichOnPath(binary);
-  if (found) return found;
+  const onPath = whichOnPath(binary);
+  if (onPath) candidates.push(onPath);
   const cand = installDirCandidate(binary);
-  if (cand) {
-    try {
-      fs.accessSync(cand, fs.constants.X_OK);
-      return cand;
-    } catch (_) {
-      /* not there */
-    }
+  if (cand) candidates.push(cand);
+
+  for (const c of candidates) {
+    if (probeVersion(c)) return c;
   }
+
+  // Nothing usable found anywhere — provision it (only for the default name).
   if (autoInstall && binary === 'officecli') {
     process.stderr.write('[officecli] CLI not found — installing from d.officecli.ai …\n');
-    install(); // official installer (install.sh on unix, install.ps1 on Windows)
+    try {
+      const cli = require('@officecli/officecli');
+      await cli.ensureBinary(); // bundled package's own signed download
+      const p = cli.binaryPath();
+      if (probeVersion(p)) return p;
+    } catch (_) { /* fall through to the official installer */ }
+    install(); // install.sh (unix) / install.ps1 (Windows)
     const after = installDirCandidate('officecli');
-    if (after && fs.existsSync(after)) return after;
+    if (after && probeVersion(after)) return after;
   }
-  return binary;
+  return binary; // give up → runCli raises the helpful MISSING_CLI
 }
 
 // Quote one token for a cmd.exe command line: wrap in double quotes when it
@@ -387,10 +391,10 @@ function quoteForCmd(s) {
   return /[\s&|<>^()"]/.test(s) ? `"${String(s).replace(/"/g, '""')}"` : String(s);
 }
 
-function runCli(binary, argv) {
+function spawnCli(binary, argv, extraOpts) {
   let cmd = binary;
   let args = argv;
-  const opts = { encoding: 'utf8' };
+  const opts = { encoding: 'utf8', ...extraOpts };
   if (IS_WIN && /\.(cmd|bat)$/i.test(binary)) {
     // Node refuses to spawn a .cmd/.bat directly without a shell since
     // CVE-2024-27980 (raises EINVAL). Run it through cmd.exe ourselves,
@@ -403,12 +407,26 @@ function runCli(binary, argv) {
     args = ['/d', '/s', '/c', `"${line}"`];
     opts.windowsVerbatimArguments = true;
   }
-  const r = spawnSync(cmd, args, opts);
+  return spawnSync(cmd, args, opts);
+}
+
+function runCli(binary, argv) {
+  const r = spawnCli(binary, argv);
   if (r.error && r.error.code === 'ENOENT') {
     throw new OfficeCliError(127, MISSING_CLI.replace('{bin}', JSON.stringify(binary)));
   }
   if (r.error) throw new OfficeCliError(-1, r.error.message);
   return r;
+}
+
+// Probe a resolved binary by running `<binary> --version`: true iff it actually
+// runs and exits 0. We accept only a WORKING officecli — a present-but-broken
+// file (wrong arch, stale/again-renamed shim, corrupt download) must not be
+// used, and conversely a working officecli on PATH must not be shadowed by a
+// needless auto-install. Output is discarded.
+function probeVersion(binPath) {
+  const r = spawnCli(binPath, ['--version'], { stdio: ['ignore', 'ignore', 'ignore'] });
+  return !r.error && r.status === 0;
 }
 
 // ---------------------------------------------------------------- the shell
